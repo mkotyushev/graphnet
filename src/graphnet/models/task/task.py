@@ -39,6 +39,7 @@ class Task(Model):
         transform_inference: Optional[Callable] = None,
         transform_support: Optional[Tuple] = None,
         loss_weight: Optional[str] = None,
+        bias: bool = True,
     ):
         """Construct `Task`.
 
@@ -87,6 +88,7 @@ class Task(Model):
         self._loss_function = loss_function
         self._inference = False
         self._loss_weight = loss_weight
+        self._bias = bias
 
         self._transform_prediction_training: Callable[
             [Tensor], Tensor
@@ -103,7 +105,7 @@ class Task(Model):
         )
 
         # Mapping from last hidden layer to required size of input
-        self._affine = Linear(hidden_size, self.nb_inputs)
+        self._affine = Linear(hidden_size, self.nb_inputs, bias=self._bias)
 
     @final
     def forward(self, x: Union[Tensor, Data]) -> Union[Tensor, Data]:

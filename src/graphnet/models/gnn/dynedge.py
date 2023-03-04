@@ -34,6 +34,7 @@ class DynEdge(GNN):
         readout_layer_sizes: Optional[List[int]] = None,
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
         add_global_variables_after_pooling: bool = False,
+        bias: bool = True,
     ):
         """Construct `DynEdge`.
 
@@ -160,6 +161,7 @@ class DynEdge(GNN):
         self._nb_global_variables = 5 + nb_inputs
         self._nb_neighbours = nb_neighbours
         self._features_subset = features_subset
+        self._bias = bias
 
         self._construct_layers()
 
@@ -180,7 +182,7 @@ class DynEdge(GNN):
             ):
                 if ix == 0:
                     nb_in *= 2
-                layers.append(torch.nn.Linear(nb_in, nb_out))
+                layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
                 layers.append(self._activation)
 
             conv_layer = DynEdgeConv(
@@ -204,7 +206,7 @@ class DynEdge(GNN):
             self._post_processing_layer_sizes
         )
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            post_processing_layers.append(torch.nn.Linear(nb_in, nb_out))
+            post_processing_layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
             post_processing_layers.append(self._activation)
 
         self._post_processing = torch.nn.Sequential(*post_processing_layers)
@@ -222,7 +224,7 @@ class DynEdge(GNN):
         readout_layers = []
         layer_sizes = [nb_latent_features] + list(self._readout_layer_sizes)
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            readout_layers.append(torch.nn.Linear(nb_in, nb_out))
+            readout_layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
             readout_layers.append(self._activation)
 
         self._readout = torch.nn.Sequential(*readout_layers)
