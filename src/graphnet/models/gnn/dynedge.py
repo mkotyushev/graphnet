@@ -19,6 +19,10 @@ GLOBAL_POOLINGS = {
 }
 
 
+def remap_values(remapping: LongTensor, x: LongTensor) -> LongTensor:
+    index = torch.bucketize(x.ravel(), remapping[0])
+    return remapping[1][index].reshape(x.shape)
+
 class DynEdge(GNN):
     """DynEdge (dynamical edge convolutional) model."""
 
@@ -35,6 +39,7 @@ class DynEdge(GNN):
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
         add_global_variables_after_pooling: bool = False,
         bias: bool = True,
+        max_pulses: int = 200,
     ):
         """Construct `DynEdge`.
 
@@ -68,6 +73,8 @@ class DynEdge(GNN):
                 after global pooling. The alternative is to  added (distribute)
                 them to the individual nodes before any convolutional
                 operations.
+            bias: if `True`, then the layers use bias weights else they don't.
+            max_pulses: truncate the number of pulses to this number
         """
         # Latent feature subset for computing nearest neighbours in DynEdge.
         if features_subset is None:
@@ -162,6 +169,7 @@ class DynEdge(GNN):
         self._nb_neighbours = nb_neighbours
         self._features_subset = features_subset
         self._bias = bias
+        self._max_pulses = max_pulses
 
         self._construct_layers()
 
@@ -273,16 +281,66 @@ class DynEdge(GNN):
 
         return global_variables
 
+    def truncate_to_max_pulses(self, data: Data) -> Data:
+        """Truncate data to max pulses."""
+        with torch.no_grad():
+            # Mask pulses
+            mask = torch.ones(data.x.shape[0], dtype=torch.bool, device='cpu')
+            cum_n_pulses = 0
+            for n_pulses in data.n_pulses:
+                if n_pulses > self._max_pulses:
+                    mask[cum_n_pulses + self._max_pulses:cum_n_pulses + n_pulses] = False
+                cum_n_pulses += n_pulses
+
+            if not mask.all():
+                # Map edge indices: drop -> -1, drop, keep -> new index
+                edge_index = data.edge_index.cpu()
+                edge_index = edge_index.cpu().apply_(
+                    lambda x: x if mask[x] else -1
+                )
+                edge_index = edge_index[:, (edge_index != -1).all(dim=0)]
+
+                all_edge_indices = torch.arange(
+                    data.x.shape[0], dtype=torch.long, device='cpu')
+                keep_edge_indices = all_edge_indices[mask]
+                keep_edge_indices_new = torch.arange(
+                    keep_edge_indices.shape[0], dtype=torch.long, device='cpu')
+                mapping = {
+                    old.item(): new.item() for old, new in zip(keep_edge_indices, keep_edge_indices_new)}
+                edge_index = edge_index.cpu().apply_(
+                    lambda x: mapping[x]
+                )
+
+                # Mask rest of values
+                data.x = data.x[mask]
+                data.y = data.y[mask]
+                data.z = data.z[mask]
+                data.time = data.time[mask]
+                data.charge = data.charge[mask]
+                data.auxiliary = data.auxiliary[mask]
+                data.batch = data.batch[mask]
+                data.n_pulses = torch.where(
+                    data.n_pulses > self._max_pulses, 
+                    self._max_pulses, 
+                    data.n_pulses
+                )
+                data.edge_index = edge_index.to(data.edge_index.device)
+        
+        return data
+
     def forward(self, data: Data) -> Tensor:
         """Apply learnable forward pass."""
+        # Truncate data
+        data = self.truncate_to_max_pulses(data)
+
         # Convenience variables
-        x, edge_index, batch = data.x, data.edge_index, data.batch
+        x, edge_index, batch, n_pulses = data.x, data.edge_index, data.batch, data.n_pulses
 
         global_variables = self._calculate_global_variables(
             x,
             edge_index,
             batch,
-            torch.log10(data.n_pulses),
+            torch.log10(n_pulses),
         )
 
         # Distribute global variables out to each node
