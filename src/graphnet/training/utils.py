@@ -82,7 +82,7 @@ def make_dataloader(
         num_workers=num_workers,
         collate_fn=collate_fn,
         persistent_workers=persistent_workers,
-        prefetch_factor=2,
+        prefetch_factor=10,
     )
 
     return dataloader
