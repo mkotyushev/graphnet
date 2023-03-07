@@ -41,6 +41,7 @@ class StandardModel(Model):
         """Construct `StandardModel`."""
         # Base class constructor
         super().__init__()
+        self.save_hyperparameters()
 
         # Check(s)
         if isinstance(tasks, Task):
