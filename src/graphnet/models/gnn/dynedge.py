@@ -39,7 +39,7 @@ class DynEdge(GNN):
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
         add_global_variables_after_pooling: bool = False,
         bias: bool = True,
-        max_pulses: int = 200,
+        max_pulses: int = None,
     ):
         """Construct `DynEdge`.
 
@@ -283,49 +283,50 @@ class DynEdge(GNN):
 
     def truncate_to_max_pulses(self, data: Data) -> Data:
         """Truncate data to max pulses."""
+        if self._max_pulses is None:
+            return data
+
         with torch.no_grad():
-            # Mask pulses
-            mask = torch.ones(data.x.shape[0], dtype=torch.bool, device='cpu')
-            cum_n_pulses = 0
-            for n_pulses in data.n_pulses:
-                if n_pulses > self._max_pulses:
-                    mask[cum_n_pulses + self._max_pulses:cum_n_pulses + n_pulses] = False
-                cum_n_pulses += n_pulses
-
-            if not mask.all():
-                # Map edge indices: drop -> -1, drop, keep -> new index
-                edge_index = data.edge_index.cpu()
-                edge_index = edge_index.cpu().apply_(
-                    lambda x: x if mask[x] else -1
+            n_pulses_new = torch.clamp(data.n_pulses, max=self._max_pulses)
+            right_border_index = (
+                n_pulses_new + 
+                torch.cat(
+                    (
+                        torch.zeros(1, dtype=torch.long, device=data.x.device),
+                        torch.cumsum(data.n_pulses, dim=0)[:-1]
+                    )
                 )
-                edge_index = edge_index[:, (edge_index != -1).all(dim=0)]
+            ).repeat_interleave(data.n_pulses)
 
-                all_edge_indices = torch.arange(
-                    data.x.shape[0], dtype=torch.long, device='cpu')
-                keep_edge_indices = all_edge_indices[mask]
-                keep_edge_indices_new = torch.arange(
-                    keep_edge_indices.shape[0], dtype=torch.long, device='cpu')
-                mapping = {
-                    old.item(): new.item() for old, new in zip(keep_edge_indices, keep_edge_indices_new)}
-                edge_index = edge_index.cpu().apply_(
-                    lambda x: mapping[x]
+            shifts = torch.cumsum(torch.cat(
+                (
+                    torch.zeros(1, dtype=torch.long, device=data.x.device),
+                    torch.where(
+                        data.n_pulses > self._max_pulses,
+                        data.n_pulses - self._max_pulses,
+                        torch.zeros_like(data.n_pulses)
+                    )[:-1]
                 )
+            ), dim=0).repeat_interleave(data.n_pulses)
+            
+            node_indices_new = torch.arange(data.x.shape[0], device=data.x.device)
+            node_indices_new[node_indices_new >= right_border_index] = -1
+            node_indices_new = node_indices_new - shifts
 
-                # Mask rest of values
-                data.x = data.x[mask]
-                data.y = data.y[mask]
-                data.z = data.z[mask]
-                data.time = data.time[mask]
-                data.charge = data.charge[mask]
-                data.auxiliary = data.auxiliary[mask]
-                data.batch = data.batch[mask]
-                data.n_pulses = torch.where(
-                    data.n_pulses > self._max_pulses, 
-                    self._max_pulses, 
-                    data.n_pulses
-                )
-                data.edge_index = edge_index.to(data.edge_index.device)
-        
+            data.edge_index[0] = node_indices_new[data.edge_index[0]]
+            data.edge_index[1] = node_indices_new[data.edge_index[1]]
+            data.edge_index = data.edge_index[:, (data.edge_index >= 0).all(dim=0)]
+
+            mask = node_indices_new >= 0
+            data.x = data.x[mask]
+            data.y = data.y[mask]
+            data.z = data.z[mask]
+            data.time = data.time[mask]
+            data.charge = data.charge[mask]
+            data.auxiliary = data.auxiliary[mask]
+            data.batch = data.batch[mask]
+            data.n_pulses = n_pulses_new
+
         return data
 
     def forward(self, data: Data) -> Tensor:
