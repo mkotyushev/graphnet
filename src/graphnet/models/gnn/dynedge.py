@@ -10,6 +10,8 @@ from graphnet.models.components.layers import DynEdgeConv
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.utils import calculate_xyzt_homophily
+from simplex.models.simplex_models import LinearGraphnet as SimplexLinear
+
 
 GLOBAL_POOLINGS = {
     "min": scatter_min,
@@ -40,6 +42,7 @@ class DynEdge(GNN):
         add_global_variables_after_pooling: bool = False,
         bias: bool = True,
         max_pulses: int = None,
+        fix_points: Optional[List[bool]] = None,
     ):
         """Construct `DynEdge`.
 
@@ -76,6 +79,12 @@ class DynEdge(GNN):
             bias: if `True`, then the layers use bias weights else they don't.
             max_pulses: truncate the number of pulses to this number
         """
+        if fix_points is not None:
+            self.linear_builder = lambda *args, **kwargs: SimplexLinear(
+                *args, **kwargs, fix_points=fix_points
+            )
+        else:
+            self.linear_builder = torch.nn.Linear
         # Latent feature subset for computing nearest neighbours in DynEdge.
         if features_subset is None:
             features_subset = slice(0, 3)
@@ -190,7 +199,7 @@ class DynEdge(GNN):
             ):
                 if ix == 0:
                     nb_in *= 2
-                layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
+                layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
                 layers.append(self._activation)
 
             conv_layer = DynEdgeConv(
@@ -214,7 +223,7 @@ class DynEdge(GNN):
             self._post_processing_layer_sizes
         )
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            post_processing_layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
+            post_processing_layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
             post_processing_layers.append(self._activation)
 
         self._post_processing = torch.nn.Sequential(*post_processing_layers)
@@ -232,7 +241,7 @@ class DynEdge(GNN):
         readout_layers = []
         layer_sizes = [nb_latent_features] + list(self._readout_layer_sizes)
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            readout_layers.append(torch.nn.Linear(nb_in, nb_out, bias=self._bias))
+            readout_layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
             readout_layers.append(self._activation)
 
         self._readout = torch.nn.Sequential(*readout_layers)

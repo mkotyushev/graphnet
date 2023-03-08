@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from graphnet.models import Model
 from graphnet.utilities.config import save_model_config
 from graphnet.utilities.decorators import final
+from simplex.models.simplex_models import LinearGraphnet as SimplexLinear
 
 
 class Task(Model):
@@ -40,6 +41,7 @@ class Task(Model):
         transform_support: Optional[Tuple] = None,
         loss_weight: Optional[str] = None,
         bias: bool = True,
+        fix_points: Optional[List[bool]] = None,
     ):
         """Construct `Task`.
 
@@ -78,6 +80,13 @@ class Task(Model):
         # Base class constructor
         super().__init__()
 
+        if fix_points is not None:
+            self.linear_builder = lambda *args, **kwargs: SimplexLinear(
+                *args, **kwargs, fix_points=fix_points
+            )
+        else:
+            self.linear_builder = Linear
+
         # Check(s)
         if isinstance(target_labels, str):
             target_labels = [target_labels]
@@ -105,7 +114,7 @@ class Task(Model):
         )
 
         # Mapping from last hidden layer to required size of input
-        self._affine = Linear(hidden_size, self.nb_inputs, bias=self._bias)
+        self._affine = self.linear_builder(hidden_size, self.nb_inputs, bias=self._bias)
 
     @final
     def forward(self, x: Union[Tensor, Data]) -> Union[Tensor, Data]:
