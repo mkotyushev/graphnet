@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 from graphnet.models import Model
 from graphnet.utilities.config import save_model_config
 from graphnet.utilities.decorators import final
-from simplex.models.simplex_models import LinearGraphnet as SimplexLinear
+from simplex.simplex_icecube_utils import LinearGraphnet as SimplexLinear
 
 
 class Task(Model):
