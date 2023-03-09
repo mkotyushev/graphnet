@@ -52,14 +52,22 @@ class LossFunction(Model):
             Loss, either averaged to a scalar (if `return_elements = False`) or
             elementwise terms with shape [N,] (if `return_elements = True`).
         """
+        # TODO: fix unsqueezed weights
+        if weights is not None and weights.ndim == 2 and weights.shape[1] == 1:
+            weights = weights.squeeze(dim=1)
+        
         elements = self._forward(prediction, target)
-        if weights is not None:
-            elements = elements * weights
         assert elements.size(dim=0) == target.size(
             dim=0
         ), "`_forward` should return elementwise loss terms."
 
-        return elements if return_elements else torch.mean(elements)
+        if weights is None:
+            return elements if return_elements else torch.mean(elements)
+        else:
+            assert weights.shape == elements.shape
+            return \
+                (elements * weights) if return_elements else \
+                (torch.sum(elements * weights) / torch.sum(weights))
 
     @abstractmethod
     def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
