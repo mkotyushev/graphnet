@@ -46,7 +46,8 @@ def make_dataloader(
     node_truth_table: Optional[str] = None,
     string_selection: List[int] = None,
     loss_weight_table: Optional[str] = None,
-    loss_weight_column: Optional[str] = None,
+    loss_weight_columns: Optional[Union[List[str], str]] = None,
+    loss_weight_transform: Optional[Callable] = None,
     index_column: str = "event_no",
     labels: Optional[Dict[str, Callable]] = None,
 ) -> DataLoader:
@@ -66,7 +67,8 @@ def make_dataloader(
         node_truth_table=node_truth_table,
         string_selection=string_selection,
         loss_weight_table=loss_weight_table,
-        loss_weight_column=loss_weight_column,
+        loss_weight_columns=loss_weight_columns,
+        loss_weight_transform=loss_weight_transform,
         index_column=index_column,
     )
 
@@ -75,15 +77,24 @@ def make_dataloader(
         for label in labels.keys():
             dataset.add_label(key=label, fn=labels[label])
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
-        collate_fn=collate_fn,
-        persistent_workers=persistent_workers,
-        prefetch_factor=10,
-    )
+    if num_workers > 0:
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=collate_fn,
+            persistent_workers=persistent_workers,
+            prefetch_factor=10
+        )
+    else:
+        dataloader = DataLoader(
+            dataset,
+            batch_size=batch_size,
+            shuffle=shuffle,
+            num_workers=num_workers,
+            collate_fn=collate_fn,
+        )
 
     return dataloader
 
@@ -106,8 +117,9 @@ def make_train_validation_dataloader(
     truth_table: str = "truth",
     node_truth_table: Optional[str] = None,
     string_selection: Optional[List[int]] = None,
-    loss_weight_column: Optional[str] = None,
+    loss_weight_columns: Optional[Union[List[str], str]] = None,
     loss_weight_table: Optional[str] = None,
+    loss_weight_transform: Optional[Callable] = None,
     index_column: str = "event_no",
     labels: Optional[Dict[str, Callable]] = None,
 ) -> Tuple[DataLoader, DataLoader]:
@@ -177,8 +189,9 @@ def make_train_validation_dataloader(
         truth_table=truth_table,
         node_truth_table=node_truth_table,
         string_selection=string_selection,
-        loss_weight_column=loss_weight_column,
+        loss_weight_columns=loss_weight_columns,
         loss_weight_table=loss_weight_table,
+        loss_weight_transform=loss_weight_transform,
         index_column=index_column,
         labels=labels,
     )

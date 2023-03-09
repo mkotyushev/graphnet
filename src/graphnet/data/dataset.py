@@ -148,8 +148,9 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         selection: Optional[Union[str, List[int], List[List[int]]]] = None,
         dtype: torch.dtype = torch.float32,
         loss_weight_table: Optional[str] = None,
-        loss_weight_column: Optional[str] = None,
+        loss_weight_columns: Optional[Union[List[str], str]] = None,
         loss_weight_default_value: Optional[float] = None,
+        loss_weight_transform: Optional[Callable[[float], float]] = None,
         seed: Optional[int] = None,
     ):
         """Construct Dataset.
@@ -183,15 +184,17 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
             dtype: Type of the feature tensor on the graph objects returned.
             loss_weight_table: Name of the table containing per-event loss
                 weights.
-            loss_weight_column: Name of the column in `loss_weight_table`
+            loss_weight_columns: Name of the column(s) in `loss_weight_table`
                 containing per-event loss weights. This is also the name of the
                 corresponding attribute assigned to the graph object.
             loss_weight_default_value: Default per-event loss weight.
                 NOTE: This default value is only applied when
-                `loss_weight_table` and `loss_weight_column` are specified, and
+                `loss_weight_table` and `loss_weight_columns` are specified, and
                 in this case to events with no value in the corresponding
                 table/column. That is, if no per-event loss weight table/column
                 is provided, this value is ignored. Defaults to None.
+            loss_weight_transform: Callable to transform values of `loss_weight_columns` 
+                columns before using them as loss weights.
             seed: Random number generator seed, used for selecting a random
                 subset of events when resolving a string-based selection (e.g.,
                 `"10000 random events ~ event_no % 5 > 0"` or `"20% random
@@ -216,6 +219,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         self._index_column = index_column
         self._truth_table = truth_table
         self._loss_weight_default_value = loss_weight_default_value
+        self._loss_weight_transform = loss_weight_transform
 
         if node_truth is not None:
             assert isinstance(node_truth_table, str)
@@ -242,18 +246,18 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         if self._string_selection:
             self._selection = f"string in {str(tuple(self._string_selection))}"
 
-        self._loss_weight_column = loss_weight_column
+        self._loss_weight_columns = loss_weight_columns
         self._loss_weight_table = loss_weight_table
         if (self._loss_weight_table is None) and (
-            self._loss_weight_column is not None
+            self._loss_weight_columns is not None
         ):
             self.warning("Error: no loss weight table specified")
             assert isinstance(self._loss_weight_table, str)
         if (self._loss_weight_table is not None) and (
-            self._loss_weight_column is None
+            self._loss_weight_columns is None
         ):
             self.warning("Error: no loss weight column specified")
-            assert isinstance(self._loss_weight_column, str)
+            assert isinstance(self._loss_weight_columns, str)
 
         self._dtype = dtype
 
@@ -492,12 +496,14 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
             node_truth = None
 
         loss_weight: Optional[float] = None  # Default
-        if self._loss_weight_column is not None:
+        if self._loss_weight_columns is not None:
             assert self._loss_weight_table is not None
-            loss_weight_list = self.query_table(
-                self._loss_weight_table,
-                self._loss_weight_column,
-                sequential_index,
+            loss_weight_list = self._loss_weight_transform(
+                self.query_table(
+                    self._loss_weight_table,
+                    self._loss_weight_columns,
+                    sequential_index,
+                )
             )
             if len(loss_weight_list):
                 loss_weight = loss_weight_list[0][0]
@@ -560,21 +566,21 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         graph.features = self._features[1:]
 
         # Add loss weight to graph.
-        if loss_weight is not None and self._loss_weight_column is not None:
+        if loss_weight is not None and self._loss_weight_columns is not None:
             # No loss weight was retrieved, i.e., it is missing for the current
             # event.
             if loss_weight < 0:
                 if self._loss_weight_default_value is None:
                     raise ValueError(
                         "At least one event is missing an entry in "
-                        f"{self._loss_weight_column} "
+                        f"{self._loss_weight_columns} "
                         "but loss_weight_default_value is None."
                     )
-                graph[self._loss_weight_column] = torch.tensor(
+                graph['loss_weight'] = torch.tensor(
                     self._loss_weight_default_value, dtype=self._dtype
                 ).reshape(-1, 1)
             else:
-                graph[self._loss_weight_column] = torch.tensor(
+                graph['loss_weight'] = torch.tensor(
                     loss_weight, dtype=self._dtype
                 ).reshape(-1, 1)
 
