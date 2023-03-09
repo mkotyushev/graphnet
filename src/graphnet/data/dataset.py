@@ -152,6 +152,8 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         loss_weight_default_value: Optional[float] = None,
         loss_weight_transform: Optional[Callable[[float], float]] = None,
         seed: Optional[int] = None,
+        max_n_pulses: Optional[int] = None,
+        max_n_pulses_strategy: Optional[str] = None,
     ):
         """Construct Dataset.
 
@@ -199,6 +201,16 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
                 subset of events when resolving a string-based selection (e.g.,
                 `"10000 random events ~ event_no % 5 > 0"` or `"20% random
                 events ~ event_no % 5 > 0"`).
+            max_n_pulses: Maximal number of pulses in event, unrestricted 
+                by default (None).
+            max_n_pulses_strategy: How to handle events with more pulses than 
+                max_n_pulses. 
+                "clamp": remove last n_pulses - max_n_pulses pulses,
+                "random": select max_n_pulses pulses randomly without repetition,
+                order is preserved,
+                "each_nth": select each nth pulse, where n = 
+                n_pulses // max_n_pulses, and clapm the last pulses,
+                "clamp" by default (None).
         """
         # Check(s)
         if isinstance(pulsemaps, str):
@@ -220,6 +232,13 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         self._truth_table = truth_table
         self._loss_weight_default_value = loss_weight_default_value
         self._loss_weight_transform = loss_weight_transform
+        
+        self._max_n_pulses = max_n_pulses
+        if max_n_pulses is not None:
+            if max_n_pulses_strategy is None:
+                max_n_pulses_strategy = "clamp"
+        assert max_n_pulses_strategy in ["clamp", "random", "each_nth"]
+        self._max_n_pulses_strategy = max_n_pulses_strategy
 
         if node_truth is not None:
             assert isinstance(node_truth_table, str)
@@ -560,7 +579,18 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
 
         # Construct graph data object
         x = torch.tensor(data, dtype=self._dtype)  # pylint: disable=C0103
+
+        if self._max_n_pulses is not None and len(x) > self._max_n_pulses:
+            if self._max_n_pulses_strategy == 'clamp':
+                x = x[:self._max_n_pulses]
+            elif self._max_n_pulses_strategy == 'random':
+                indices = torch.sort(torch.randperm(len(x))[:self._max_n_pulses])
+                x = x[indices]
+            elif self._max_n_pulses_strategy == 'each_nth':
+                x = x[::len(x) // self._max_n_pulses]
+                x = x[:self._max_n_pulses]
         n_pulses = torch.tensor(len(x), dtype=torch.int32)
+
         graph = Data(x=x, edge_index=None)
         graph.n_pulses = n_pulses
         graph.features = self._features[1:]

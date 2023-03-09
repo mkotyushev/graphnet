@@ -50,6 +50,8 @@ def make_dataloader(
     loss_weight_transform: Optional[Callable] = None,
     index_column: str = "event_no",
     labels: Optional[Dict[str, Callable]] = None,
+    max_n_pulses: Optional[int] = None,
+    max_n_pulses_strategy: Optional[str] = None,
 ) -> DataLoader:
     """Construct `DataLoader` instance."""
     # Check(s)
@@ -70,6 +72,8 @@ def make_dataloader(
         loss_weight_columns=loss_weight_columns,
         loss_weight_transform=loss_weight_transform,
         index_column=index_column,
+        max_n_pulses=max_n_pulses,
+        max_n_pulses_strategy=max_n_pulses_strategy,
     )
 
     # adds custom labels to dataset
@@ -122,6 +126,8 @@ def make_train_validation_dataloader(
     loss_weight_transform: Optional[Callable] = None,
     index_column: str = "event_no",
     labels: Optional[Dict[str, Callable]] = None,
+    max_n_pulses: Optional[int] = None,
+    max_n_pulses_strategy_train: Optional[str] = None,
 ) -> Tuple[DataLoader, DataLoader]:
     """Construct train and test `DataLoader` instances."""
     # Reproducibility
@@ -194,17 +200,20 @@ def make_train_validation_dataloader(
         loss_weight_transform=loss_weight_transform,
         index_column=index_column,
         labels=labels,
+        max_n_pulses=max_n_pulses,
     )
 
     training_dataloader = make_dataloader(
         shuffle=True,
         selection=training_selection,
+        max_n_pulses_strategy=max_n_pulses_strategy_train,
         **common_kwargs,  # type: ignore[arg-type]
     )
 
     validation_dataloader = make_dataloader(
         shuffle=False,
         selection=validation_selection,
+        max_n_pulses_strategy="each_nth",
         **common_kwargs,  # type: ignore[arg-type]
     )
 

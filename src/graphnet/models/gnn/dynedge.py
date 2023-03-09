@@ -290,59 +290,8 @@ class DynEdge(GNN):
 
         return global_variables
 
-    def truncate_to_max_pulses(self, data: Data) -> Data:
-        """Truncate data to max pulses."""
-        if self._max_pulses is None:
-            return data
-
-        with torch.no_grad():
-            n_pulses_new = torch.clamp(data.n_pulses, max=self._max_pulses)
-            right_border_index = (
-                n_pulses_new + 
-                torch.cat(
-                    (
-                        torch.zeros(1, dtype=torch.long, device=data.x.device),
-                        torch.cumsum(data.n_pulses, dim=0)[:-1]
-                    )
-                )
-            ).repeat_interleave(data.n_pulses)
-
-            shifts = torch.cumsum(torch.cat(
-                (
-                    torch.zeros(1, dtype=torch.long, device=data.x.device),
-                    torch.where(
-                        data.n_pulses > self._max_pulses,
-                        data.n_pulses - self._max_pulses,
-                        torch.zeros_like(data.n_pulses)
-                    )[:-1]
-                )
-            ), dim=0).repeat_interleave(data.n_pulses)
-            
-            node_indices_new = torch.arange(data.x.shape[0], device=data.x.device)
-            node_indices_new[node_indices_new >= right_border_index] = -1
-            node_indices_new = node_indices_new - shifts
-
-            data.edge_index[0] = node_indices_new[data.edge_index[0]]
-            data.edge_index[1] = node_indices_new[data.edge_index[1]]
-            data.edge_index = data.edge_index[:, (data.edge_index >= 0).all(dim=0)]
-
-            mask = node_indices_new >= 0
-            data.x = data.x[mask]
-            data.y = data.y[mask]
-            data.z = data.z[mask]
-            data.time = data.time[mask]
-            data.charge = data.charge[mask]
-            data.auxiliary = data.auxiliary[mask]
-            data.batch = data.batch[mask]
-            data.n_pulses = n_pulses_new
-
-        return data
-
     def forward(self, data: Data) -> Tensor:
         """Apply learnable forward pass."""
-        # Truncate data
-        data = self.truncate_to_max_pulses(data)
-
         # Convenience variables
         x, edge_index, batch, n_pulses = data.x, data.edge_index, data.batch, data.n_pulses
 
