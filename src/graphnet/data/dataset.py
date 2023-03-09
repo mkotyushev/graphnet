@@ -584,7 +584,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
             if self._max_n_pulses_strategy == 'clamp':
                 x = x[:self._max_n_pulses]
             elif self._max_n_pulses_strategy == 'random':
-                indices = torch.sort(torch.randperm(len(x))[:self._max_n_pulses])
+                indices, _ = torch.sort(torch.randperm(len(x))[:self._max_n_pulses])
                 x = x[indices]
             elif self._max_n_pulses_strategy == 'each_nth':
                 x = x[::len(x) // self._max_n_pulses]
