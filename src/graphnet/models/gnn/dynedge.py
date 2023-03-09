@@ -41,7 +41,6 @@ class DynEdge(GNN):
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
         add_global_variables_after_pooling: bool = False,
         bias: bool = True,
-        max_pulses: int = None,
         fix_points: Optional[List[bool]] = None,
     ):
         """Construct `DynEdge`.
@@ -77,7 +76,6 @@ class DynEdge(GNN):
                 them to the individual nodes before any convolutional
                 operations.
             bias: if `True`, then the layers use bias weights else they don't.
-            max_pulses: truncate the number of pulses to this number
         """
         if fix_points is not None:
             self.linear_builder = lambda *args, **kwargs: SimplexLinear(
@@ -178,7 +176,6 @@ class DynEdge(GNN):
         self._nb_neighbours = nb_neighbours
         self._features_subset = features_subset
         self._bias = bias
-        self._max_pulses = max_pulses
 
         self._construct_layers()
 
