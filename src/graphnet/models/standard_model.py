@@ -41,7 +41,7 @@ class StandardModel(Model):
         """Construct `StandardModel`."""
         # Base class constructor
         super().__init__()
-        self.save_hyperparameters()
+        self.save_hyperparameters(ignore=['detector', 'gnn', 'tasks'])
 
         # Check(s)
         if isinstance(tasks, Task):
