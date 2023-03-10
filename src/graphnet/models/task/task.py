@@ -7,7 +7,6 @@ import numpy as np
 
 import torch
 from torch import Tensor
-from torch.nn import Linear
 from torch_geometric.data import Data
 
 if TYPE_CHECKING:
@@ -85,7 +84,7 @@ class Task(Model):
                 *args, **kwargs, fix_points=fix_points
             )
         else:
-            self.linear_builder = Linear
+            self.linear_builder = torch.nn.Linear
 
         # Check(s)
         if isinstance(target_labels, str):
