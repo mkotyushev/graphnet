@@ -2,7 +2,7 @@
 
 from collections import OrderedDict
 import os
-from typing import Dict, List, Optional, Tuple, Union, Callable
+from typing import Type, Dict, List, Optional, Tuple, Union, Callable
 
 import numpy as np
 import pandas as pd
@@ -38,6 +38,7 @@ def make_dataloader(
     *,
     batch_size: int,
     shuffle: bool,
+    dataset_class: Optional[Type] = None,
     selection: Optional[List[int]] = None,
     num_workers: int = 10,
     persistent_workers: bool = True,
@@ -59,7 +60,8 @@ def make_dataloader(
     if isinstance(pulsemaps, str):
         pulsemaps = [pulsemaps]
 
-    dataset = SQLiteDataset(
+    dataset_class = dataset_class or SQLiteDataset
+    dataset = dataset_class(
         path=db,
         pulsemaps=pulsemaps,
         features=features,
@@ -143,7 +145,7 @@ def make_train_validation_dataloader(
         # If no selection is provided, use all events in dataset.
         dataset: Dataset
         if db.endswith(".db"):
-            dataset = SQLiteDataset(
+            dataset = SQLiteDatasetMaxNPulses(
                 db,
                 pulsemaps,
                 features,

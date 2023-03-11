@@ -147,3 +147,80 @@ class SQLiteDataset(Dataset):
                 self._all_connections_established = False
                 self._conn = None
         return self
+
+
+class SQLiteDatasetMaxNPulses(SQLiteDataset):
+    """Pytorch dataset for reading data from SQLite databases."""
+    def query_table(
+        self,
+        table: str,
+        columns: Union[List[str], str],
+        sequential_index: Optional[int] = None,
+        selection: Optional[str] = None,
+    ) -> List[Tuple[Any, ...]]:
+        """Query table at a specific index, optionally with some selection."""
+
+        if table != 'pulse_table' or self._max_n_pulses is None:
+            return super().query_table(table, columns, sequential_index, selection)
+
+        # Check(s)
+        if isinstance(columns, list):
+            columns = ", ".join(columns)
+
+        if not selection:  # I.e., `None` or `""`
+            selection = "1=1"  # Identically true, to select all
+
+        index = self._get_event_index(sequential_index)
+
+        # Query table
+        assert index is not None
+        self._establish_connection(index)
+        try:
+            assert self._conn
+            if sequential_index is None:
+                combined_selections = selection
+            else:
+                combined_selections = (
+                    f"{self._index_column} = {index} and {selection}"
+                )
+
+            query = (
+                f"SELECT {columns} FROM {table} WHERE "
+                f"{combined_selections}"
+            )
+
+            if self._max_n_pulses is not None:
+                fpi = f'(SELECT first_pulse_index FROM meta_table WHERE event_id = {index})'
+                lpi = f'(SELECT last_pulse_index FROM meta_table WHERE event_id = {index})'
+                if self._max_n_pulses_strategy == 'clamp':
+                    # x = x[:self._max_n_pulses]
+                    query = (
+                        f'SELECT {columns} FROM pulse_table '
+                        f'WHERE rowid '
+                        f'BETWEEN {fpi} AND MIN({fpi} + {self._max_n_pulses}, {lpi})'
+                    )
+                elif self._max_n_pulses_strategy == 'random_sequential':
+                    # indices, _ = torch.sort(torch.randperm(len(x))[:self._max_n_pulses])
+                    # x = x[indices]
+                    query = (
+                        f'WITH vars AS ('
+                        f'    SELECT ('
+                        f'        CASE WHEN (({lpi} - {fpi}) > {self._max_n_pulses}) '
+                        f'        THEN (ABS(RANDOM()) % ({lpi} - {self._max_n_pulses} - {fpi}) + {fpi}) '
+                        f'        ELSE {fpi} '
+                        f'        END'
+                        f'    ) AS fpi_new'
+                        f') '
+                        f'SELECT {columns} FROM pulse_table, vars '
+                        f'WHERE rowid '
+                        f'BETWEEN vars.fpi_new AND MIN(vars.fpi_new + {self._max_n_pulses}, {lpi})'
+                    )
+                else:
+                    raise NotImplementedError(f'Unknown max_n_pulses_strategy: {self._max_n_pulses_strategy}')
+            result = self._conn.execute(query).fetchall()
+        except sqlite3.OperationalError as e:
+            if "no such column" in str(e):
+                raise ColumnMissingException(str(e))
+            else:
+                raise e
+        return result
