@@ -582,6 +582,18 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         else:
             data = np.array([]).reshape((0, len(self._features) - 1))
 
+
+        # Apply max_n_pulses strategy
+        if self._max_n_pulses is not None and len(data) > self._max_n_pulses:
+            if self._max_n_pulses_strategy == 'clamp':
+                data = data[:self._max_n_pulses]
+            elif self._max_n_pulses_strategy == 'random':
+                indices, _ = torch.sort(torch.randperm(len(data))[:self._max_n_pulses])
+                data = data[indices]
+            elif self._max_n_pulses_strategy == 'each_nth':
+                data = data[::len(data) // self._max_n_pulses]
+                data = data[:self._max_n_pulses]
+        
         # Apply transforms
         if self._transforms is not None:
             for transform in self._transforms:
@@ -589,20 +601,9 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
                     data, truth_dict = transform(data, truth_dict)
                 else:
                     data = transform(data)
-
+                
         # Construct graph data object
         x = torch.tensor(data, dtype=self._dtype)  # pylint: disable=C0103
-
-        # Apply max_n_pulses strategy
-        if self._max_n_pulses is not None and len(x) > self._max_n_pulses:
-            if self._max_n_pulses_strategy == 'clamp':
-                x = x[:self._max_n_pulses]
-            elif self._max_n_pulses_strategy == 'random':
-                indices, _ = torch.sort(torch.randperm(len(x))[:self._max_n_pulses])
-                x = x[indices]
-            elif self._max_n_pulses_strategy == 'each_nth':
-                x = x[::len(x) // self._max_n_pulses]
-                x = x[:self._max_n_pulses]
         n_pulses = torch.tensor(len(x), dtype=torch.int32)
 
         graph = Data(x=x, edge_index=None)
