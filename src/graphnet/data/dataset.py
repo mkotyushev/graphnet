@@ -154,6 +154,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         seed: Optional[int] = None,
         max_n_pulses: Optional[int] = None,
         max_n_pulses_strategy: Optional[str] = None,
+        transforms: Optional[List[Callable]] = None,
     ):
         """Construct Dataset.
 
@@ -211,6 +212,9 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
                 "each_nth": select each nth pulse, where n = 
                 n_pulses // max_n_pulses, and clapm the last pulses,
                 "clamp" by default (None).
+            transforms: List of callables to apply to events before
+                constructing graph objects. Each callable should take a single
+                argument, which is the event, and return the transformed event.
         """
         # Check(s)
         if isinstance(pulsemaps, str):
@@ -232,6 +236,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         self._truth_table = truth_table
         self._loss_weight_default_value = loss_weight_default_value
         self._loss_weight_transform = loss_weight_transform
+        self._transforms = transforms
         
         self._max_n_pulses = max_n_pulses
         if max_n_pulses is not None:
@@ -577,9 +582,24 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         else:
             data = np.array([]).reshape((0, len(self._features) - 1))
 
+        # Apply transforms
+        if self._transforms is not None:
+            if node_truth is None:
+                self.warning(
+                    'Applying transforms without node truth '
+                    'information, is it test data?'
+                )
+
+            for transform in self._transforms:
+                if node_truth is not None:
+                    data, node_truth_dict = transform(data, node_truth_dict)
+                else:
+                    data, _ = transform(x)
+
         # Construct graph data object
         x = torch.tensor(data, dtype=self._dtype)  # pylint: disable=C0103
 
+        # Apply max_n_pulses strategy
         if self._max_n_pulses is not None and len(x) > self._max_n_pulses:
             if self._max_n_pulses_strategy == 'clamp':
                 x = x[:self._max_n_pulses]
