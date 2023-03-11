@@ -584,17 +584,11 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
 
         # Apply transforms
         if self._transforms is not None:
-            if node_truth is None:
-                self.warning(
-                    'Applying transforms without node truth '
-                    'information, is it test data?'
-                )
-
             for transform in self._transforms:
-                if node_truth is not None:
-                    data, node_truth_dict = transform(data, node_truth_dict)
+                if truth_dict is not None:
+                    data, truth_dict = transform(data, truth_dict)
                 else:
-                    data, _ = transform(x)
+                    data = transform(data)
 
         # Construct graph data object
         x = torch.tensor(data, dtype=self._dtype)  # pylint: disable=C0103
