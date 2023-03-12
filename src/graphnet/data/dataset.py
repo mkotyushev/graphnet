@@ -239,7 +239,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         if max_n_pulses is not None:
             if max_n_pulses_strategy is None:
                 max_n_pulses_strategy = "clamp"
-        assert max_n_pulses_strategy in ["clamp", "random_sequential"]
+        assert max_n_pulses_strategy in ["clamp", "random_sequential", "random"]
         self._max_n_pulses_strategy = max_n_pulses_strategy
 
         if node_truth is not None:
@@ -579,6 +579,17 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         else:
             data = np.array([]).reshape((0, len(self._features) - 1))
 
+        # Apply max_n_pulses strategy
+        if self._max_n_pulses is not None and len(data) > self._max_n_pulses:
+            if self._max_n_pulses_strategy == 'clamp':
+                data = data[:self._max_n_pulses]
+            elif self._max_n_pulses_strategy == 'random':
+                indices, _ = torch.sort(torch.randperm(len(data))[:self._max_n_pulses])
+                data = data[indices]
+            elif self._max_n_pulses_strategy == 'each_nth':
+                data = data[::len(data) // self._max_n_pulses]
+                data = data[:self._max_n_pulses]
+        
         # Apply transforms
         if self._transforms is not None:
             for transform in self._transforms:
