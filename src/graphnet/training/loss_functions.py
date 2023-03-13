@@ -454,3 +454,101 @@ class VonMisesFisher3DLoss(VonMisesFisherLoss):
         kappa = prediction[:, 3]
         p = kappa.unsqueeze(1) * prediction[:, [0, 1, 2]]
         return self._evaluate(p, target)
+
+
+class CosineLoss(LossFunction):
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate cosine distance between given angles (on unit sphere).
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 2] where
+                columns 0, 1 are predictions of `zenith` and `azimuth`
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            Elementwise cosine distance. Shape [N,]
+        """
+        prediction_x = torch.cos(prediction[:, 1]) * torch.sin(prediction[:, 0])
+        prediction_y = torch.sin(prediction[:, 1]) * torch.sin(prediction[:, 0])
+        prediction_z = torch.cos(prediction[:, 0])
+        prediction_xyz = torch.stack([prediction_x, prediction_y, prediction_z], dim=1)
+        prediction_xyz = prediction_xyz / torch.norm(prediction_xyz, p=2, dim=1).unsqueeze(1)
+
+        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
+        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
+        target_z = torch.cos(target[:, 0])
+        target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
+        target_xyz = target_xyz / torch.norm(target_xyz, p=2, dim=1).unsqueeze(1)
+
+        result = 1 - torch.sum(prediction_xyz * target_xyz, dim=1)
+
+        return result
+
+
+class VonMisesFisher2DLossSinCos(VonMisesFisherLoss):
+    """von Mises-Fisher loss function vectors in the 2D plane."""
+
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate von Mises-Fisher loss for an angle in the 2D plane.
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 3] where 0, 1
+                columns are sin and cos of `angle` and 2nd column is an estimate
+                of `kappa`.
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            loss: Elementwise von Mises-Fisher loss terms. Shape [N,]
+        """
+        # Check(s)
+        assert prediction.dim() == 2 and prediction.size()[1] == 3
+        assert target.dim() == 2
+        assert prediction.size()[0] == target.size()[0]
+
+        # Formatting target
+        angle_true = target[:, 0]
+        t = torch.stack(
+            [
+                torch.cos(angle_true),
+                torch.sin(angle_true),
+            ],
+            dim=1,
+        )
+
+        # Formatting prediction
+        sin = prediction[:, 0]
+        cos = prediction[:, 1]
+        kappa = prediction[:, 2]
+        p = kappa.unsqueeze(1) * torch.stack(
+            [
+                cos,
+                sin,
+            ],
+            dim=1,
+        )
+
+        return self._evaluate(p, t)
+
+
+class EuclidianDistanceLossSinCos(LossFunction):
+    """Mean squared error in three dimensions."""
+
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate 2D Euclidean distance between predicted and target
+        (sin, cos) vectors.
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 2]
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            Elementwise von Euclidian distance between (sin, cos) vectors 
+            loss terms. Shape [N,]
+        """
+        sin_true = torch.sin(target[:, 0])
+        cos_true = torch.cos(target[:, 0])
+
+        sin_pred = prediction[:, 0]
+        cos_pred = prediction[:, 1]
+
+        return ((sin_true - sin_pred) ** 2 + (cos_true - cos_pred) ** 2) ** 0.5

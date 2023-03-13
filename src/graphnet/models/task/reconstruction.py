@@ -174,3 +174,62 @@ class InelasticityReconstruction(Task):
     def _forward(self, x: Tensor) -> Tensor:
         # Transform output to unit range
         return torch.sigmoid(x)
+
+
+class ZenithAzimuthReconstruction(Task):
+    """Reconstructs zenith and azimuth angles from zenith and azimuth logits.
+    """
+
+    # Requires two features: logits of zenith, azimuth.
+    nb_inputs = 2
+
+    def _forward(self, x: Tensor) -> Tensor:
+        # Transform outputs to angle and prepare prediction
+        zenith = torch.tanh(x[:, 0])
+        azimuth = torch.tanh(x[:, 1])
+        return torch.stack((zenith, azimuth), dim=1)
+
+
+class ZenithAzimuthReconstructionWithKappa(Task):
+    """Reconstructs zenith and azimuth angles from zenith and azimuth logits.
+    """
+
+    # Requires two features: logits of zenith, azimuth.
+    nb_inputs = 2
+
+    def _forward(self, x: Tensor) -> Tensor:
+        kappa = torch.linalg.vector_norm(x, dim=1) + eps_like(x)
+        angles = super()._forward(x)
+        return torch.stack((angles, kappa), dim=1)
+
+
+class AngleReconstructionSinCos(Task):
+    """Separately reconstructs sin and cos of angle from 2 logits."""
+
+    def __init__(self, half, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.half = half
+    
+    # Requires two features: separate logits for sin and cos.
+    nb_inputs = 2
+
+    def _forward(self, x: Tensor) -> Tensor:
+        # Transform outputs to angle and prepare prediction
+        sin, cos = torch.tanh(x[:, 0]), torch.tanh(x[:, 1])
+        if self.half:
+            sin = (sin + 1.0) / 2.0
+        return torch.stack((sin, cos), dim=1)
+
+        
+class AngleReconstructionSincosWithKappa(AngleReconstructionSinCos):
+    """Separately reconstructs sin and cos of angle and kappa from 2 logits."""
+    def __init__(self, half, *args, **kwargs):
+        super().__init__(half, *args, **kwargs)
+
+    # Requires two features: separate logits for sin and cos.
+    nb_inputs = 2
+
+    def _forward(self, x: Tensor) -> Tensor:
+        kappa = torch.linalg.vector_norm(x, dim=1) + eps_like(x)
+        sincos = super()._forward(x)
+        return torch.concatenate((sincos, kappa[:, None]), dim=1)
