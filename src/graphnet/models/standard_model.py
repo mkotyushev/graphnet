@@ -31,6 +31,7 @@ class StandardModel(Model):
         detector: Detector,
         gnn: GNN,
         tasks: Union[Task, List[Task]],
+        tasks_weiths: Optional[List[float]] = None,
         coarsening: Optional[Coarsening] = None,
         optimizer_class: type = Adam,
         optimizer_kwargs: Optional[Dict] = None,
@@ -56,6 +57,7 @@ class StandardModel(Model):
         self._detector = detector
         self._gnn = gnn
         self._tasks = ModuleList(tasks)
+        self._tasks_weights = tasks_weiths
         self._coarsening = coarsening
         self._optimizer_class = optimizer_class
         self._optimizer_kwargs = optimizer_kwargs or dict()
@@ -145,7 +147,19 @@ class StandardModel(Model):
         assert all(
             loss.dim() == 0 for loss in losses
         ), "Please reduce loss for each task separately"
-        return torch.sum(torch.stack(losses))
+
+        if self._tasks_weights is not None:
+            assert len(self._tasks_weights) == len(losses)
+            return torch.sum(
+                torch.stack(
+                    [
+                        weigth * loss 
+                        for weigth, loss in zip(self._tasks_weights, losses)
+                    ]
+                )
+            )
+        else:
+            return torch.sum(torch.stack(losses))
 
     def _get_batch_size(self, data: Data) -> int:
         return torch.numel(torch.unique(data.batch))
