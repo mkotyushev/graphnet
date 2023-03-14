@@ -552,3 +552,24 @@ class EuclidianDistanceLossSinCos(LossFunction):
         cos_pred = prediction[:, 1]
 
         return ((sin_true - sin_pred) ** 2 + (cos_true - cos_pred) ** 2) ** 0.5
+
+
+class EuclidianDistanceLossCos(LossFunction):
+    """Mean squared error in three dimensions."""
+
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate Euclidean distance between predicted and target
+        (cos,) vectors.
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 1]
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            Elementwise von Euclidian distance between (cos,) vectors 
+            loss terms. Shape [N,]
+        """
+        cos_true = torch.cos(target[:, 0])
+        cos_pred = prediction[:, 0]
+
+        return (cos_true - cos_pred).abs()

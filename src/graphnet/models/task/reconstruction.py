@@ -221,6 +221,18 @@ class AngleReconstructionSinCos(Task):
         return torch.stack((sin, cos), dim=1)
 
         
+class AngleReconstructionCos(Task):
+    """Reconstructs cos of angle from 1 logit."""
+
+    # Requires 1 feature: logit for cos.
+    nb_inputs = 1
+
+    def _forward(self, x: Tensor) -> Tensor:
+        # Transform output to angle and prepare prediction
+        cos = torch.tanh(x[:, 0])
+        return cos.unsqueeze(1)
+
+
 class AngleReconstructionSincosWithKappa(AngleReconstructionSinCos):
     """Separately reconstructs sin and cos of angle and kappa from 2 logits."""
     def __init__(self, half, *args, **kwargs):
