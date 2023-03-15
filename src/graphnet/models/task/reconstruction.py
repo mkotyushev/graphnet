@@ -57,6 +57,16 @@ class DirectionReconstructionWithKappa(Task):
         return torch.stack((vec_x, vec_y, vec_z, kappa), dim=1)
 
 
+class DirectionReconstruction(Task):
+    """Reconstructs direction with kappa from the 3D-vMF distribution."""
+
+    # Requires three features: untransformed points in (x,y,z)-space.
+    nb_inputs = 3
+
+    def _forward(self, x: Tensor) -> Tensor:
+        return x
+
+
 class ZenithReconstruction(Task):
     """Reconstructs zenith angle."""
 

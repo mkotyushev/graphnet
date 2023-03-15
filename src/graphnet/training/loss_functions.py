@@ -485,6 +485,22 @@ class CosineLoss(LossFunction):
         return result
 
 
+class CosineLoss3D(LossFunction):
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        prediction_xyz = prediction[:, :3]
+        prediction_xyz = prediction_xyz / torch.norm(prediction_xyz, p=2, dim=1).unsqueeze(1)
+
+        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
+        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
+        target_z = torch.cos(target[:, 0])
+        target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
+        target_xyz = target_xyz / torch.norm(target_xyz, p=2, dim=1).unsqueeze(1)
+
+        result = 1 - torch.sum(prediction_xyz * target_xyz, dim=1)
+
+        return result
+
+
 class VonMisesFisher2DLossSinCos(VonMisesFisherLoss):
     """von Mises-Fisher loss function vectors in the 2D plane."""
 
