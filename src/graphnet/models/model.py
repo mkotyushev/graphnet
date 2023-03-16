@@ -68,7 +68,7 @@ class Model(Configurable, LightningModule, LoggerMixin, ABC):
             devices=inference_devices,
             callbacks=callbacks,
             logger=logger,
-            strategy=None,
+            strategy='auto',
             **trainer_kwargs,
         )
 
