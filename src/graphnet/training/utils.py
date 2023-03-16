@@ -92,8 +92,10 @@ def make_dataloader(
             shuffle=shuffle,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            persistent_workers=persistent_workers,
-            prefetch_factor=5
+            persistent_workers=True,
+            prefetch_factor=2,
+            pin_memory=True,
+            pin_memory_device="cuda",
         )
     else:
         dataloader = DataLoader(
