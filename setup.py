@@ -51,7 +51,7 @@ EXTRAS_REQUIRE = {
         "torch-cluster>=1.6",
         "torch-scatter>=2.0",
         "torch-sparse>=0.6",
-        "torch-geometric>=2.0",
+        "pyg-nightly>=2.3",
         "pytorch-lightning>=1.6",
     ],
 }
