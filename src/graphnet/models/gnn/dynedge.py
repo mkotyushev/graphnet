@@ -10,7 +10,7 @@ from graphnet.models.components.layers import DynEdgeConv
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.utils import calculate_xyzt_homophily
-from simplex.simplex_icecube_utils import LinearGraphnet as SimplexLinear
+from simplex.models.simplex_models import Linear as SimplexLinear
 
 
 GLOBAL_POOLINGS = {
