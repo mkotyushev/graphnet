@@ -239,7 +239,12 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         if max_n_pulses is not None:
             if max_n_pulses_strategy is None:
                 max_n_pulses_strategy = "clamp"
-        assert max_n_pulses_strategy in ["clamp", "random_sequential", "random"]
+        assert (
+            max_n_pulses_strategy is None or 
+            max_n_pulses_strategy in ["clamp", "random_sequential", "random"]
+        ), \
+            "max_n_pulses_strategy must be one of 'clamp', 'random_sequential', 'random', " \
+            f"got {max_n_pulses_strategy}"
         self._max_n_pulses_strategy = max_n_pulses_strategy
 
         if node_truth is not None:
