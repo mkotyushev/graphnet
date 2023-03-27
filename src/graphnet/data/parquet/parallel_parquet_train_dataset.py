@@ -20,6 +20,34 @@ def build_geometry_table(geometry_path):
     return geometry
 
 
+def build_mock_table(table_name):
+    if table_name == 'data':
+        _data = [[0, 0.0, 0.0, 0.0, 0.0, 0.0, False]]
+        _columns = [
+            ("event_id", pl.Int64),
+            ("x", pl.Float64),
+            ("y", pl.Float64),
+            ("z", pl.Float64),
+            ("time", pl.Float64),
+            ("charge", pl.Float64),
+            ("auxiliary", pl.Boolean),
+        ]
+    elif table_name == 'meta':
+        _data = [[0, 0, 0, 0, 0.0, 0.0]]
+        _columns = [
+            ("batch_id", pl.Int64),
+            ("event_id", pl.Int64),
+            ("first_pulse_index", pl.Int64),
+            ("last_pulse_index", pl.Int64),
+            ("zenith", pl.Float64),
+            ("azimuth", pl.Float64),
+        ]
+    else:
+        raise ValueError(f'Unknown table name: {table_name}')
+
+    return pl.DataFrame(data=_data or None, columns=_columns)
+
+
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
 class ParallelParquetTrainDataset(Dataset):
     def __init__(
@@ -67,8 +95,8 @@ class ParallelParquetTrainDataset(Dataset):
         # it needs to be set to tables with same structure
         # as in real chunks
         self.tables = {
-            'data': self._load_data(self.filepathes[0]),
-            'meta': self._load_meta(self._filepath_to_meta_filepath(self.filepathes[0])),
+            'data': build_mock_table('data'),
+            'meta': build_mock_table('meta'),
         }
         self.index = 0
         self.order = np.random.permutation(len(self.tables['data']))
