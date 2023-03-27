@@ -6,6 +6,6 @@ from .parquet_dataconverter import ParquetDataConverter
 
 if has_torch_package():
     from .parquet_dataset import ParquetDataset
-    from .sequential_parquet_dataset import SequentialParquetDataset
+    from .parallel_parquet_train_dataset import ParallelParquetTrainDataset
 
 del has_torch_package

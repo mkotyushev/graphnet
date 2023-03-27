@@ -21,7 +21,7 @@ def build_geometry_table(geometry_path):
 
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
-class SequentialParquetDataset(Dataset):
+class ParallelParquetTrainDataset(Dataset):
     def __init__(
         self, 
         path,
@@ -31,8 +31,6 @@ class SequentialParquetDataset(Dataset):
         features,
         truth,
         *,
-        shuffle_outer: bool = False,
-        shuffle_inner: bool = False,
         meta_path: Optional[str] = None,
         node_truth: Optional[List[str]] = None,
         index_column: str = "event_no",
@@ -51,40 +49,32 @@ class SequentialParquetDataset(Dataset):
         transforms: Optional[List[Callable]] = None,
     ):
         self.filepathes = list(filepathes)
-        self.meta_path = meta_path
-        self.shuffle_outer = shuffle_outer
-        self.shuffle_inner = shuffle_inner
-        self.label_fns = dict()
+        self.geometry_table = build_geometry_table(geometry_path)
+        self.meta_path = meta_path   
 
-        # Internal sequence state
-        self.current_outer_index = 0
-        self.current_inner_index = 0
-        self.current_inner_index_permutation = None
-        self.filepath_to_len = {
-            filepath: 
-            len(pl.read_parquet(self._filepath_to_meta_filepath(filepath))) 
-            for filepath in self.filepathes
-        }
+        self.all_indices, self.filepath_to_len = [], dict()
+        for filepath in self.filepathes:
+            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
+            self.all_indices.extend(meta[index_column].to_list())
+            self.filepath_to_len[filepath] = len(meta)
 
-        if self.shuffle_outer:
-            np.random.shuffle(self.filepathes)
-        
-        filepath = self.filepathes[self.current_outer_index]      
-        meta_filepath = self._filepath_to_meta_filepath(filepath)          
-        
-        self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
-        if self.shuffle_inner:
-            np.random.shuffle(self.current_inner_index_permutation)
-
-        geometry = build_geometry_table(geometry_path)
-        self.current_tables = {
-            'data': self._load_data(filepath, geometry),
-            'meta': self._load_meta(meta_filepath) if meta_filepath is not None else None,
-            'geometry': geometry,
-        }
-
-        self.length = sum(self.filepath_to_len.values())
+        # Shared state
+        self.remaining_filepathes = self.filepathes[:]
+        np.random.shuffle(self.remaining_filepathes)
         self.lock = torch.multiprocessing.Lock()
+
+        # Individual state: for internal checks of Dataset
+        # it needs to be set to tables with same structure
+        # as in real chunks
+        self.tables = {
+            'data': self._load_data(self.filepathes[0]),
+            'meta': self._load_meta(self._filepath_to_meta_filepath(self.filepathes[0])),
+        }
+        self.index = 0
+        self.order = np.random.permutation(len(self.tables['data']))
+
+        # Later we need to load actual data
+        self.is_initialized = False
 
         super().__init__(
             path=path, 
@@ -97,7 +87,7 @@ class SequentialParquetDataset(Dataset):
             node_truth_table='meta',
             string_selection=string_selection,
             selection=selection,
-            dtype=torch.float32,
+            dtype=dtype,
             loss_weight_table='meta' if loss_weight_columns is not None else None,
             loss_weight_columns=loss_weight_columns,
             loss_weight_default_value=loss_weight_default_value,
@@ -108,19 +98,18 @@ class SequentialParquetDataset(Dataset):
             transforms=transforms,
         )
 
+    def _get_inner_index(self):
+        return int(self.order[self.index])
+
     def _filepath_to_meta_filepath(self, filepath):
         if self.meta_path is None:
             return None
         batch_id = filepath.stem.split('_')[1]
         return self.meta_path / f'train_meta_{batch_id}.parquet'
-        
-    # def _load_data(self, filepath):
-    #     df = pl.read_parquet(filepath).sort('event_id')
-    #     return df
 
-    def _load_data(self, filepath, geometry):
+    def _load_data(self, filepath):
         df = pl.read_parquet(filepath)
-        df = df.join(geometry, on='sensor_id', how="inner")
+        df = df.join(self.geometry_table, on='sensor_id', how="inner")
         df = df.groupby("event_id").agg([
             pl.count(),
             pl.col("sensor_id").list(),
@@ -136,34 +125,26 @@ class SequentialParquetDataset(Dataset):
         df = pl.read_parquet(meta_filepath).sort('event_id')
         return df
 
-    def _advance(self, idx):
+    def _load_next(self):
         with self.lock:
-            if self.current_inner_index < len(self.current_tables['data']):
-                self.current_inner_index += 1
-            else:
-                self.current_inner_index = 0
-                self.current_outer_index += 1
+            if len(self.remaining_filepathes) == 0:
+                self.remaining_filepathes = self.filepathes[:]
+                np.random.shuffle(self.remaining_filepathes)
+            filepath = self.remaining_filepathes.pop()
+        self.tables = {
+            'data': self._load_data(filepath),
+            'meta': self._load_meta(self._filepath_to_meta_filepath(filepath)),
+        }
+        self.index = 0
+        self.order = np.random.permutation(len(self.tables['data']))
 
-            if self.current_outer_index >= len(self.filepathes):
-                self.current_outer_index = 0
+    def _advance(self):
+        assert self.is_initialized
+        
+        self.index += 1
 
-                # Shuffle outer
-                if self.shuffle_outer:
-                    np.random.shuffle(self.filepathes)
-            
-            # Shuffle inner
-            filepath = self.filepathes[self.current_outer_index]      
-            meta_filepath = self._filepath_to_meta_filepath(filepath)          
-            
-            self.current_inner_index_permutation = list(range(self.filepath_to_len[filepath]))
-            if self.current_inner_index == 0 and self.shuffle_inner:
-                np.random.shuffle(self.current_inner_index_permutation)
-
-            # Load data if needed
-            if self.current_inner_index == 0:
-                self.current_tables['data'] = self._load_data(filepath, self.current_tables['geometry'])
-                if meta_filepath is not None:
-                    self.current_tables['meta'] = self._load_meta(meta_filepath)
+        if self.index >= len(self.tables['data']):
+            self._load_next()
 
     # Override abstract method(s)
     def _init(self) -> None:
@@ -175,18 +156,13 @@ class SequentialParquetDataset(Dataset):
         pass
 
     def _get_all_indices(self) -> List[int]:
-        indices = []
-        for filepath in self.filepathes:
-            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
-            indices.extend(meta['event_id'].to_list())
-        return indices
+        return self.all_indices
 
     def _get_event_index(
         self, sequential_index: Optional[int]
     ) -> Optional[int]:
         """Return a the event index corresponding to a `sequential_index`."""
-        with self.lock:
-            return self.current_inner_index_permutation[self.current_inner_index]
+        return self.tables['meta'][self._get_inner_index(), self._index_column]
 
     def query_table(
         self,
@@ -216,14 +192,12 @@ class SequentialParquetDataset(Dataset):
             ColumnMissingException: If one or more element in `columns` is not
                 present in `table`.
         """
-        with self.lock:
-            t = self.current_tables[table]
-            index = self.current_inner_index_permutation[self.current_inner_index]
+        t = self.tables[table]
         
         if len(set(t.columns).intersection(columns)) != len(columns):
             raise ColumnMissingException
 
-        return t[index][columns].rows()
+        return t[self._get_inner_index()][columns].rows()
 
     def _create_graph(
         self,
@@ -351,16 +325,19 @@ class SequentialParquetDataset(Dataset):
 
         return graph
 
-    # def _get_current_index(self) -> int:
-    #     """Return the current index."""
-    #     with self.lock:
-    #         return self.current_inner_index_permutation[self.current_inner_index]
-
     def __getitem__(self, sequential_index: int) -> Data:
+        # Load first chunk inside worker
+        if not self.is_initialized:
+            self._load_next()
+            self.is_initialized = True
+        
+        # Here sequential_index is actually not relevant
+        # because we are using the inner index
+        # later in query_table
         result = super().__getitem__(sequential_index)
         
         # Advance the sequence state and load new chunk 
         # if current chunk is over or not initialized
-        self._advance(sequential_index)
+        self._advance()
         
         return result
