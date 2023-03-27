@@ -38,7 +38,7 @@ def make_dataloader(
     *,
     batch_size: int,
     shuffle: bool,
-    dataset: Optional[Type] = None,
+    dataset_class: Optional[Type] = None,
     selection: Optional[List[int]] = None,
     num_workers: int = 10,
     persistent_workers: bool = True,
@@ -54,31 +54,32 @@ def make_dataloader(
     max_n_pulses: Optional[int] = None,
     max_n_pulses_strategy: Optional[str] = None,
     transforms: Optional[List[Callable]] = None,
+    **dataset_kwargs,
 ) -> DataLoader:
     """Construct `DataLoader` instance."""
     # Check(s)
     if isinstance(pulsemaps, str):
         pulsemaps = [pulsemaps]
-
-    if dataset is None:
-        dataset = SQLiteDataset(
-            path=db,
-            pulsemaps=pulsemaps,
-            features=features,
-            truth=truth,
-            selection=selection,
-            node_truth=node_truth,
-            truth_table=truth_table,
-            node_truth_table=node_truth_table,
-            string_selection=string_selection,
-            loss_weight_table=loss_weight_table,
-            loss_weight_columns=loss_weight_columns,
-            loss_weight_transform=loss_weight_transform,
-            index_column=index_column,
-            max_n_pulses=max_n_pulses,
-            max_n_pulses_strategy=max_n_pulses_strategy,
-            transforms=transforms,
-        )
+    
+    dataset = dataset_class(
+        path=db,
+        pulsemaps=pulsemaps,
+        features=features,
+        truth=truth,
+        selection=selection,
+        node_truth=node_truth,
+        truth_table=truth_table,
+        node_truth_table=node_truth_table,
+        string_selection=string_selection,
+        loss_weight_table=loss_weight_table,
+        loss_weight_columns=loss_weight_columns,
+        loss_weight_transform=loss_weight_transform,
+        index_column=index_column,
+        max_n_pulses=max_n_pulses,
+        max_n_pulses_strategy=max_n_pulses_strategy,
+        transforms=transforms,
+        **dataset_kwargs
+    )
 
     # adds custom labels to dataset
     if isinstance(labels, dict):
