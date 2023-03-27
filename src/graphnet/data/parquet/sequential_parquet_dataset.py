@@ -147,10 +147,11 @@ class SequentialParquetDataset(Dataset):
             if self.current_outer_index >= len(self.filepathes):
                 self.current_outer_index = 0
 
-            # Shuffle
-            if self.current_outer_index == 0 and self.shuffle_outer:
-                np.random.shuffle(self.filepathes)
+                # Shuffle outer
+                if self.shuffle_outer:
+                    np.random.shuffle(self.filepathes)
             
+            # Shuffle inner
             filepath = self.filepathes[self.current_outer_index]      
             meta_filepath = self._filepath_to_meta_filepath(filepath)          
             
@@ -222,12 +223,133 @@ class SequentialParquetDataset(Dataset):
         if len(set(t.columns).intersection(columns)) != len(columns):
             raise ColumnMissingException
 
-        columns_to_explode = [c for c in columns if t[c].dtype == pl.List]
-        
-        if len(columns_to_explode) == 0:
-            return t[index][columns].rows()
+        return t[index][columns].rows()
+
+    def _create_graph(
+        self,
+        features: List[Tuple[float, ...]],
+        truth: Tuple[Any, ...],
+        node_truth: Optional[List[Tuple[Any, ...]]] = None,
+        loss_weight: Optional[float] = None,
+    ) -> Data:
+        """Create Pytorch Data (i.e. graph) object.
+
+        No preprocessing is performed at this stage, just as no node adjancency
+        is imposed. This means that the `edge_attr` and `edge_weight`
+        attributes are not set.
+
+        Args:
+            features: List of tuples, containing event features.
+            truth: List of tuples, containing truth information.
+            node_truth: List of tuples, containing node-level truth.
+            loss_weight: A weight associated with the event for weighing the
+                loss.
+
+        Returns:
+            Graph object.
+        """
+        # Convert nested list to simple dict
+        truth_dict = {
+            key: truth[index] for index, key in enumerate(self._truth)
+        }
+
+        # Define custom labels
+        labels_dict = self._get_labels(truth_dict)
+
+        # Convert nested list to simple dict
+        if node_truth is not None:
+            node_truth_array = np.asarray(node_truth)
+            assert self._node_truth is not None
+            node_truth_dict = {
+                key: node_truth_array[:, index]
+                for index, key in enumerate(self._node_truth)
+            }
+
+        # Catch cases with no reconstructed pulses
+        features = [feature[0] for feature in features[0][1:]]
+        if len(features):
+            data = np.asarray(features).T
         else:
-            return t[index][columns].explode(columns_to_explode).explode(columns_to_explode).rows()
+            data = np.array([]).reshape((0, len(self._features) - 1))
+
+        # Apply max_n_pulses strategy
+        if self._max_n_pulses is not None and len(data) > self._max_n_pulses:
+            if self._max_n_pulses_strategy == 'clamp':
+                data = data[:self._max_n_pulses]
+            elif self._max_n_pulses_strategy == 'random':
+                indices, _ = torch.sort(torch.randperm(len(data))[:self._max_n_pulses])
+                data = data[indices]
+            elif self._max_n_pulses_strategy == 'each_nth':
+                data = data[::len(data) // self._max_n_pulses]
+                data = data[:self._max_n_pulses]
+        
+        # Apply transforms
+        if self._transforms is not None:
+            for transform in self._transforms:
+                if truth_dict is not None:
+                    data, truth_dict = transform(data, truth_dict)
+                else:
+                    data = transform(data)
+                
+        # Construct graph data object
+        x = torch.tensor(data, dtype=self._dtype)  # pylint: disable=C0103
+        n_pulses = torch.tensor(len(x), dtype=torch.int32)
+
+        graph = Data(x=x, edge_index=None)
+        graph.n_pulses = n_pulses
+        graph.features = self._features[1:]
+
+        # Add loss weight to graph.
+        if loss_weight is not None and self._loss_weight_columns is not None:
+            # No loss weight was retrieved, i.e., it is missing for the current
+            # event.
+            if loss_weight < 0:
+                if self._loss_weight_default_value is None:
+                    raise ValueError(
+                        "At least one event is missing an entry in "
+                        f"{self._loss_weight_columns} "
+                        "but loss_weight_default_value is None."
+                    )
+                graph['loss_weight'] = torch.tensor(
+                    self._loss_weight_default_value, dtype=self._dtype
+                ).reshape(-1, 1)
+            else:
+                graph['loss_weight'] = torch.tensor(
+                    loss_weight, dtype=self._dtype
+                ).reshape(-1, 1)
+
+        # Write attributes, either target labels, truth info or original
+        # features.
+        add_these_to_graph = [labels_dict, truth_dict]
+        if node_truth is not None:
+            add_these_to_graph.append(node_truth_dict)
+        for write_dict in add_these_to_graph:
+            for key, value in write_dict.items():
+                try:
+                    graph[key] = torch.tensor(value)
+                except TypeError:
+                    # Cannot convert `value` to Tensor due to its data type,
+                    # e.g. `str`.
+                    self.debug(
+                        (
+                            f"Could not assign `{key}` with type "
+                            f"'{type(value).__name__}' as attribute to graph."
+                        )
+                    )
+
+        # Additionally add original features as (static) attributes
+        for index, feature in enumerate(graph.features):
+            if feature not in ["x"]:
+                graph[feature] = graph.x[:, index].detach()
+
+        # Add custom labels to the graph
+        for key, fn in self._label_fns.items():
+            graph[key] = fn(graph)
+
+        # Add Dataset Path. Useful if multiple datasets are concatenated.
+        graph["dataset_path"] = self._path
+
+        return graph
 
     # def _get_current_index(self) -> int:
     #     """Return the current index."""
