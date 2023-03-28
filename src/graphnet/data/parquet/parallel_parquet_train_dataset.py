@@ -111,7 +111,6 @@ class ParallelParquetTrainDataset(Dataset):
         return self.meta_path / f'train_meta_{batch_id}.parquet'
 
     def _load_data(self, filepath):
-        print(f'Loading data from {filepath}...')
         df = dd.read_parquet(filepath, engine='pyarrow').reset_index()
         df = pl.from_pandas(df.compute())
         df = df \
@@ -134,23 +133,39 @@ class ParallelParquetTrainDataset(Dataset):
         return df
                 
     def _load_meta(self, meta_filepath):
-        print(f'Loading data from {meta_filepath}...')
         df = dd.read_parquet(meta_filepath, engine='pyarrow').reset_index()
         df = pl.from_pandas(df.compute())
         df = df.sort('event_id')
         return df
 
     def _load_next(self):
+        # TODO: check worker_info.id is sequential starting from 0
+
         # Select file for current worker
         worker_info = torch.utils.data.get_worker_info()
         worker_id, num_workers = 0, 1
         if worker_info is not None:
             worker_id = worker_info.id
             num_workers = worker_info.num_workers
-        filepath = self.filepathes[
+            assert len(self.filepathes) > worker_info.num_workers, \
+                f'Use less workers than number of files: {len(self.filepathes)} <= {worker_id}'
+        
+        # TODO: now in case when len(self.filepathes) % num_workers != 0 
+        # some batches are read more frequently: not really
+        # affecting the result for len(self.filepathes) >> num_workers, 
+        # but it would be nice to have it fixed
+        # print(
+        #     f'Loading data for worker {worker_id + 1} of {num_workers} workers... '
+        #     f'Current read_files_count: {self.read_files_count}'
+        #     f'len(self.filepathes): {len(self.filepathes)}'
+        # )
+        worker_filepathes = self.filepathes[
             worker_id::
             num_workers
-        ][self.read_files_count]
+        ]
+        # print(f'worker_filepathes: {worker_filepathes}')
+        filepath = worker_filepathes[self.read_files_count]
+        # print(f'Loading data from {filepath}...')
 
         # Update internal state
         self.tables = {
@@ -162,18 +177,7 @@ class ParallelParquetTrainDataset(Dataset):
         self.indexes = self.tables['meta'][self._index_column]
 
         # Advance read_files_count
-        if len(self.filepathes) % num_workers != 0:
-            # TODO: len(self.filepathes) + 1 and then truncating 
-            # to len(self.filepathes) allows to take into account 
-            # last "batch" of files which is not full.
-            # Need to rewrite this in a more elegant way
-            self.read_files_count = (self.read_files_count + 1) % ((len(self.filepathes) + 1) // num_workers)
-            if self.read_files_count >= len(self.filepathes):
-                self.read_files_count = 0
-        else:
-            self.read_files_count = (self.read_files_count + 1) % (len(self.filepathes) // num_workers)
-
-        assert self.read_files_count < len(self.filepathes)
+        self.read_files_count = (self.read_files_count + 1) % len(worker_filepathes)
 
     def _advance(self):
         assert self.is_initialized, 'Dataset is not initialized'
