@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import polars as pl
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
@@ -18,7 +19,7 @@ def build_geometry_table(geometry_path):
         sensor_id=geometry['sensor_id'].astype('int16')
     )
         
-    return geometry.compute()
+    return pl.from_pandas(geometry.compute())
 
 
 def build_mock_table(table_name):
@@ -45,7 +46,7 @@ def build_mock_table(table_name):
     else:
         raise ValueError(f'Unknown table name: {table_name}')
 
-    return dd.from_pandas(pd.DataFrame(data=_data), npartitions=1).compute()
+    return pl.from_pandas(pd.DataFrame(data=_data))
 
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
@@ -104,7 +105,7 @@ class ParallelParquetTrainDataset(Dataset):
         }
         self.index = 0
         self.order = np.random.permutation(len(self.tables['meta']))
-        self.indexes = self.tables['meta'].index.values
+        self.indexes = self.tables['meta'][index_column]
         # self.indexes.compute_chunk_sizes()
 
         # Later we need to load actual data
@@ -143,13 +144,31 @@ class ParallelParquetTrainDataset(Dataset):
 
     def _load_data(self, filepath):
         df = dd.read_parquet(filepath, engine='pyarrow').reset_index()
-        df = df.merge(self.geometry_table, on='sensor_id', how="inner")
-        df = df.set_index('event_id')
-        return df.compute()
+        df = pl.from_pandas(df.compute())
+        df = df \
+            .join(self.geometry_table, on='sensor_id', how="inner") \
+            .sort('event_id') \
+            .groupby("event_id") \
+            .agg(
+                [
+                    pl.count(),
+                    pl.col("sensor_id").list(),
+                    pl.col("x").list(),
+                    pl.col("y").list(),
+                    pl.col("z").list(),
+                    pl.col("time").list(),
+                    pl.col("charge").list(),
+                    pl.col("auxiliary").list(),
+                ]
+            ) \
+            .sort('event_id')
+        return df
                 
     def _load_meta(self, meta_filepath):
-        df = dd.read_parquet(meta_filepath, engine='pyarrow').set_index('event_id')
-        return df.compute()
+        df = dd.read_parquet(meta_filepath, engine='pyarrow').reset_index()
+        df = pl.from_pandas(df.compute())
+        df = df.sort('event_id')
+        return df
 
     def _load_next(self):
         with self.lock:
@@ -164,8 +183,7 @@ class ParallelParquetTrainDataset(Dataset):
         }
         self.index = 0
         self.order = np.random.permutation(len(self.tables['meta']))
-        self.indexes = self.tables['meta'].index.values
-        # self.indexes.compute_chunk_sizes()
+        self.indexes = self.tables['meta'][self._index_column]
 
     def _advance(self):
         assert self.is_initialized
@@ -225,23 +243,11 @@ class ParallelParquetTrainDataset(Dataset):
                 present in `table`.
         """
         t = self.tables[table]
-
-        # Drop index column if present
-        i = None
-        if self._index_column in columns:
-            i = columns.index(self._index_column)
-            columns = columns[:i] + columns[i + 1:]
         
         if len(set(t.columns).intersection(columns)) != len(columns):
             raise ColumnMissingException
 
-        result = t.loc[self._get_event_index(sequential_index), columns].values
-        if result.ndim == 1:
-            result = result[None, :]
-        if i is not None:
-            result = np.insert(result, i, self._get_event_index(sequential_index), axis=1)
-        
-        return result.astype(np.float64)
+        return t[self._get_inner_index()][columns].rows()
 
     def _query(
         self, sequential_index: int
@@ -346,8 +352,9 @@ class ParallelParquetTrainDataset(Dataset):
             }
 
         # Catch cases with no reconstructed pulses
+        features = [feature[0] for feature in features[0][1:]]
         if len(features):
-            data = np.asarray(features)[:, 1:]
+            data = np.asarray(features).T
         else:
             data = np.array([]).reshape((0, len(self._features) - 1))
 
