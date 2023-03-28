@@ -1,3 +1,4 @@
+import gc
 import os
 import random
 import time
@@ -179,6 +180,8 @@ class ParallelParquetTrainDataset(Dataset):
         filepath = worker_filepathes[self.read_files_count]
 
         # Update internal state
+        del self.tables['data'], self.tables['meta']
+        gc.collect()
         self.tables = {
             'data': self._load_data(filepath),
             'meta': self._load_meta(self._filepath_to_meta_filepath(filepath)),
