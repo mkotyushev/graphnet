@@ -16,7 +16,8 @@ from graphnet.data.sqlite import SQLiteDataset
 from graphnet.data.parquet import (
     ParquetDataset, 
     ParallelParquetTrainDataset, 
-    parallel_parquet_worker_init_fn
+    parallel_parquet_worker_init_fn,
+    desync_timeout_s
 )
 from graphnet.models import Model
 from graphnet.utilities.logging import get_logger
@@ -91,11 +92,14 @@ def make_dataloader(
             dataset.add_label(key=label, fn=labels[label])
 
     if num_workers > 0:
-        multiprocessing_context, worker_init_fn = None, None
+        multiprocessing_context, worker_init_fn, timeout = None, None, 0.0
         if dataset_class is ParallelParquetTrainDataset:
             multiprocessing_context = 'spawn'
             worker_init_fn = parallel_parquet_worker_init_fn
+            timeout = desync_timeout_s + 1.0  # add some spare time
+
             persistent_workers = True
+
         dataloader = DataLoader(
             dataset,
             batch_size=batch_size,
@@ -105,7 +109,8 @@ def make_dataloader(
             persistent_workers=persistent_workers,
             prefetch_factor=5,
             multiprocessing_context=multiprocessing_context,
-            worker_init_fn=worker_init_fn
+            worker_init_fn=worker_init_fn,
+            timeout=timeout,
         )
     else:
         dataloader = DataLoader(

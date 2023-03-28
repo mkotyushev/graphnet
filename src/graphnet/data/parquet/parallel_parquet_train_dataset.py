@@ -1,5 +1,6 @@
 import os
 import random
+import time
 import numpy as np
 import torch
 import numpy as np
@@ -18,6 +19,8 @@ class ListMockWithLen:
         return self.length
 
 
+# desync_timeout_s should be larger than single file reading time
+desync_timeout_s = 20
 def parallel_parquet_worker_init_fn(worker_id):
     # Ensure reproducibility for all the libraries
     seed = worker_id
@@ -28,6 +31,9 @@ def parallel_parquet_worker_init_fn(worker_id):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+
+    # Sleep to avoid synchronous reading from disk
+    time.sleep(desync_timeout_s * worker_id)
 
 
 def build_geometry_table(geometry_path):
