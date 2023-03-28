@@ -6,15 +6,13 @@ import torch
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
+import polars as pl
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
 
-pl = None
-
 
 def build_geometry_table(geometry_path):
-    global pl
     geometry = dd.read_csv(geometry_path)
 
     geometry = geometry.assign(
@@ -24,13 +22,6 @@ def build_geometry_table(geometry_path):
         sensor_id=geometry['sensor_id'].astype('int16')
     )
 
-    worker_info = torch.utils.data.get_worker_info()
-    if worker_info is not None:
-        import polars
-        pl = polars
-    else:
-        raise ValueError('Trying to import polars in main process')
-        
     return pl.from_pandas(geometry.compute())
 
 
