@@ -10,6 +10,14 @@ from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
 
 
+class ListMockWithLen:
+    def __init__(self, length):
+        self.length = length
+
+    def __len__(self):
+        return self.length
+
+
 def parallel_parquet_worker_init_fn(worker_id):
     # Ensure reproducibility for all the libraries
     seed = worker_id
@@ -195,11 +203,14 @@ class ParallelParquetTrainDataset(Dataset):
         pass
 
     def _get_all_indices(self) -> List[int]:
-        all_indices = []
+        # To aviod storing all the indices 
+        # (not really needed here or in Dataset other than checking length)
+        # use ListMockWithLen
+        length = 0
         for filepath in self.filepathes:
             meta = pd.read_parquet(self._filepath_to_meta_filepath(filepath))
-            all_indices.extend(meta[self._index_column].tolist())
-        return all_indices
+            length += len(meta)
+        return ListMockWithLen(length)
 
     def _get_event_index(
         self, sequential_index: Optional[int]
