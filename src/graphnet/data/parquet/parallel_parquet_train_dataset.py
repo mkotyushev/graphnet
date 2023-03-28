@@ -1,6 +1,8 @@
+import pickle
+import sys
+import traceback
 import numpy as np
 import torch
-import polars as pl
 import dask.dataframe as dd
 import numpy as np
 import pandas as pd
@@ -8,8 +10,11 @@ from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
 
+pl = None
+
 
 def build_geometry_table(geometry_path):
+    global pl
     geometry = dd.read_csv(geometry_path)
 
     geometry = geometry.assign(
@@ -18,35 +23,15 @@ def build_geometry_table(geometry_path):
         z=geometry['z'] / 500,
         sensor_id=geometry['sensor_id'].astype('int16')
     )
+
+    worker_info = torch.utils.data.get_worker_info()
+    if worker_info is not None:
+        import polars
+        pl = polars
+    else:
+        raise ValueError('Trying to import polars in main process')
         
     return pl.from_pandas(geometry.compute())
-
-
-def build_mock_table(table_name):
-    if table_name == 'data':
-        _data = {
-            'event_id': [0, 0, 0, 0, 0, 0],
-            'sensor_id': [0, 1, 2, 3, 4, 5],
-            'x': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'y': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'z': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'time': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'charge': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'auxiliary': [False, False, False, False, False, False],
-        }
-    elif table_name == 'meta':
-        _data = {
-            'batch_id': [0, 0, 0, 0, 0, 0],
-            'event_id': [0, 0, 0, 0, 0, 0],
-            'first_pulse_index': [0, 0, 0, 0, 0, 0],
-            'last_pulse_index': [0, 0, 0, 0, 0, 0],
-            'zenith': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            'azimuth': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-        }
-    else:
-        raise ValueError(f'Unknown table name: {table_name}')
-
-    return pl.from_pandas(pd.DataFrame(data=_data))
 
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
@@ -78,38 +63,21 @@ class ParallelParquetTrainDataset(Dataset):
         transforms: Optional[List[Callable]] = None,
     ):
         self.filepathes = list(filepathes)
-        self.geometry_table = build_geometry_table(geometry_path)
+        self.geometry_path = geometry_path   
         self.meta_path = meta_path   
-
-        self.all_indices, self.filepath_to_index, self.filepath_to_len = [], dict(), dict()
-        for filepath in self.filepathes:
-            meta = dd.read_parquet(
-                self._filepath_to_meta_filepath(filepath), 
-                engine='pyarrow'
-            ).reset_index()
-            self.all_indices.extend(meta[index_column])
-            self.filepath_to_index[filepath] = meta[index_column].values
-            self.filepath_to_len[filepath] = len(meta)
-
-        # Shared state
-        self.remaining_filepathes = self.filepathes[:]
-        np.random.shuffle(self.remaining_filepathes)
-        self.lock = torch.multiprocessing.Lock()
 
         # Individual state: for internal checks of Dataset
         # it needs to be set to tables with same structure
         # as in real chunks
+        self.geometry_table = None
         self.tables = {
-            'data': build_mock_table('data'),
-            'meta': build_mock_table('meta'),
+            'data': None,
+            'meta': None,
         }
-        self.index = 0
-        self.order = np.random.permutation(len(self.tables['meta']))
-        self.indexes = self.tables['meta'][index_column]
-        # self.indexes.compute_chunk_sizes()
-
-        # Later we need to load actual data
-        self.is_initialized = False
+        self.index = None
+        self.order = None
+        self.indexes = None
+        self.read_files_count = 0
 
         super().__init__(
             path=path, 
@@ -133,6 +101,10 @@ class ParallelParquetTrainDataset(Dataset):
             transforms=transforms,
         )
 
+    def _is_init(self, table: str) -> bool:
+        assert table in self.tables, f'Unknown table: {table}'
+        return self.tables[table] is not None
+
     def _get_inner_index(self):
         return int(self.order[self.index])
 
@@ -143,6 +115,7 @@ class ParallelParquetTrainDataset(Dataset):
         return self.meta_path / f'train_meta_{batch_id}.parquet'
 
     def _load_data(self, filepath):
+        print(f'Loading data from {filepath}...')
         df = dd.read_parquet(filepath, engine='pyarrow').reset_index()
         df = pl.from_pandas(df.compute())
         df = df \
@@ -165,18 +138,23 @@ class ParallelParquetTrainDataset(Dataset):
         return df
                 
     def _load_meta(self, meta_filepath):
+        print(f'Loading data from {meta_filepath}...')
         df = dd.read_parquet(meta_filepath, engine='pyarrow').reset_index()
         df = pl.from_pandas(df.compute())
         df = df.sort('event_id')
         return df
 
     def _load_next(self):
-        with self.lock:
-            if len(self.remaining_filepathes) == 0:
-                self.remaining_filepathes = self.filepathes[:]
-                np.random.shuffle(self.remaining_filepathes)
-            filepath = self.remaining_filepathes.pop()
-
+        worker_info = torch.utils.data.get_worker_info()
+        print(f'Loading next file for worker {worker_info}, self.read_files_count is {self.read_files_count}...')
+        if worker_info is None:
+            filepath = self.filepathes[self.read_files_count - 1]
+        else:
+            filepath = self.filepathes[
+                worker_info.id::
+                worker_info.num_workers
+            ][self.read_files_count - 1]
+        print(f'filepath is {filepath}')
         self.tables = {
             'data': self._load_data(filepath),
             'meta': self._load_meta(self._filepath_to_meta_filepath(filepath)),
@@ -186,11 +164,12 @@ class ParallelParquetTrainDataset(Dataset):
         self.indexes = self.tables['meta'][self._index_column]
 
     def _advance(self):
-        assert self.is_initialized
+        assert self.read_files_count > 0
         
         self.index += 1
 
         if self.index >= len(self.tables['data']):
+            self.read_files_count = (self.read_files_count + 1) % len(self.filepathes)
             self._load_next()
 
     # Override abstract method(s)
@@ -203,7 +182,8 @@ class ParallelParquetTrainDataset(Dataset):
         pass
 
     def _get_all_indices(self) -> List[int]:
-        return self.all_indices
+        with open('/workspace/icecube/data/train_all_indices.pkl', 'rb') as f:
+            return pickle.load(f)
 
     def _get_event_index(
         self, sequential_index: Optional[int]
@@ -439,9 +419,10 @@ class ParallelParquetTrainDataset(Dataset):
 
     def __getitem__(self, sequential_index: int) -> Data:
         # Load first chunk inside worker
-        if not self.is_initialized:
+        if self.read_files_count == 0:
+            self.read_files_count = (self.read_files_count + 1) % len(self.filepathes)
+            self.geometry_table = build_geometry_table(self.geometry_path)
             self._load_next()
-            self.is_initialized = True
         
         # Here sequential_index is actually not relevant
         # because we are using the inner index

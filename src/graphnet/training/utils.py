@@ -13,7 +13,7 @@ from torch_geometric.data import Batch, Data
 
 from graphnet.data.dataset import Dataset
 from graphnet.data.sqlite import SQLiteDataset
-from graphnet.data.parquet import ParquetDataset
+from graphnet.data.parquet import ParquetDataset, ParallelParquetTrainDataset
 from graphnet.models import Model
 from graphnet.utilities.logging import get_logger
 
@@ -93,8 +93,9 @@ def make_dataloader(
             shuffle=shuffle,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            persistent_workers=persistent_workers,
-            prefetch_factor=5
+            persistent_workers=True,
+            prefetch_factor=None,
+            multiprocessing_context='spawn'
         )
     else:
         dataloader = DataLoader(

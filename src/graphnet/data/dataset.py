@@ -379,6 +379,10 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         """
 
     # Public method(s)
+    def _is_init(self, table: str) -> bool:
+        """Return whether `table` has been initialised. Could be overridden."""
+        return True
+
     def add_label(self, key: str, fn: Callable[[Data], Any]) -> None:
         """Add custom graph label define using function `fn`."""
         assert (
@@ -464,6 +468,13 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         table: str,
     ) -> List[str]:
         """Return a list missing columns in `table`."""
+        if not self._is_init(table):
+            self.warning(
+                f"Not checking for missing columns in {table} "
+                f"table due to it not being initialised."
+            )
+            return []
+
         for column in columns:
             try:
                 self.query_table(table, [column], 0)
