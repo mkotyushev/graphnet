@@ -3,6 +3,7 @@ import random
 import numpy as np
 import torch
 import numpy as np
+import pandas as pd
 import polars as pl
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
@@ -199,8 +200,8 @@ class ParallelParquetTrainDataset(Dataset):
     def _get_all_indices(self) -> List[int]:
         all_indices = []
         for filepath in self.filepathes:
-            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
-            all_indices.extend(meta[self._index_column].to_list())
+            meta = pd.read_parquet(self._filepath_to_meta_filepath(filepath))
+            all_indices.extend(meta[self._index_column].tolist())
         return all_indices
 
     def _get_event_index(
