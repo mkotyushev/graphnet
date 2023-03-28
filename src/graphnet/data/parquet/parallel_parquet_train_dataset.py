@@ -248,68 +248,6 @@ class ParallelParquetTrainDataset(Dataset):
 
         return t[self._get_inner_index()][columns].rows()
 
-    def _query(
-        self, sequential_index: int
-    ) -> Tuple[
-        List[Tuple[float, ...]],
-        Tuple[Any, ...],
-        Optional[List[Tuple[Any, ...]]],
-        Optional[float],
-    ]:
-        """Query file for event features and truth information.
-
-        The returned lists have lengths correspondings to the number of pulses
-        in the event. Their constituent tuples have lengths corresponding to
-        the number of features/attributes in each output
-
-        Args:
-            sequential_index: Sequentially numbered index
-                (i.e. in [0,len(self))) of the event to query. This _may_
-                differ from the indexation used in `self._indices`.
-
-        Returns:
-            Tuple containing pulse-level event features; event-level truth
-                information; pulse-level truth information; and event-level
-                loss weights, respectively.
-        """
-        features = []
-        for pulsemap in self._pulsemaps:
-            features_pulsemap = self.query_table(
-                pulsemap, self._features, sequential_index, self._selection
-            )
-            features.extend(features_pulsemap)
-
-        truth: Tuple[Any, ...] = self.query_table(
-            self._truth_table, self._truth, sequential_index
-        )[0]
-        if self._node_truth:
-            assert self._node_truth_table is not None
-            node_truth = self.query_table(
-                self._node_truth_table,
-                self._node_truth,
-                sequential_index,
-                self._selection,
-            )
-        else:
-            node_truth = None
-
-        loss_weight: Optional[float] = None  # Default
-        if self._loss_weight_columns is not None:
-            assert self._loss_weight_table is not None
-            loss_weight_list = self._loss_weight_transform(
-                self.query_table(
-                    self._loss_weight_table,
-                    self._loss_weight_columns,
-                    sequential_index,
-                )
-            )
-            if len(loss_weight_list):
-                loss_weight = loss_weight_list[0][0]
-            else:
-                loss_weight = -1.0
-
-        return features, truth, node_truth, loss_weight
-
     def _create_graph(
         self,
         features: List[Tuple[float, ...]],
