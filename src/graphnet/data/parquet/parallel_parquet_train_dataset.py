@@ -1,3 +1,5 @@
+import os
+import random
 import numpy as np
 import torch
 import numpy as np
@@ -5,6 +7,18 @@ import polars as pl
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
+
+
+def parallel_parquet_worker_init_fn(worker_id):
+    # Ensure reproducibility for all the libraries
+    seed = worker_id
+    random.seed(seed)
+    # AFAIK env vars are not inherited by subprocesses 
+    # if spawn context is used
+    os.environ['PYTHONHASHSEED'] = str(seed)  
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
 
 
 def build_geometry_table(geometry_path):
@@ -55,7 +69,6 @@ class ParallelParquetTrainDataset(Dataset):
         # Individual state: for internal checks of Dataset
         # it needs to be set to tables with same structure
         # as in real chunks
-        self.geometry_table = None
         self.tables = {
             'data': None,
             'meta': None,
@@ -64,6 +77,8 @@ class ParallelParquetTrainDataset(Dataset):
         self.order = None
         self.indexes = None
         self.read_files_count = 0
+        
+        self.geometry_table = None
         self.is_initialized = False
 
         super().__init__(
@@ -124,7 +139,12 @@ class ParallelParquetTrainDataset(Dataset):
         return df
 
     def _load_next(self):
-        # TODO: check worker_info.id is sequential starting from 0
+        # Reading from https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataloader.py
+        # worker_info.id is in [0, num_workers - 1] sequential.
+        # So we can use it to select file for current worker.
+        # 
+        # And persistent_workers is somehow not used ???
+        # Use persistent_workers = True just in case
 
         # Select file for current worker
         worker_info = torch.utils.data.get_worker_info()
@@ -139,18 +159,11 @@ class ParallelParquetTrainDataset(Dataset):
         # some batches are read more frequently: not really
         # affecting the result for len(self.filepathes) >> num_workers, 
         # but it would be nice to have it fixed
-        # print(
-        #     f'Loading data for worker {worker_id + 1} of {num_workers} workers... '
-        #     f'Current read_files_count: {self.read_files_count}'
-        #     f'len(self.filepathes): {len(self.filepathes)}'
-        # )
         worker_filepathes = self.filepathes[
             worker_id::
             num_workers
         ]
-        # print(f'worker_filepathes: {worker_filepathes}')
         filepath = worker_filepathes[self.read_files_count]
-        # print(f'Loading data from {filepath}...')
 
         # Update internal state
         self.tables = {
