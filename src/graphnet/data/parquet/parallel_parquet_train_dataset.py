@@ -9,6 +9,7 @@ import polars as pl
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
+from .icecube_kaggle_lengths import parquet_file_stem_to_length
 
 
 class ListMockWithLen:
@@ -214,8 +215,7 @@ class ParallelParquetTrainDataset(Dataset):
         # use ListMockWithLen
         length = 0
         for filepath in self.filepathes:
-            meta = pd.read_parquet(self._filepath_to_meta_filepath(filepath))
-            length += len(meta)
+            length += parquet_file_stem_to_length[filepath.stem]
         return ListMockWithLen(length)
 
     def _get_event_index(
