@@ -93,8 +93,8 @@ def make_dataloader(
             shuffle=shuffle,
             num_workers=num_workers,
             collate_fn=collate_fn,
-            persistent_workers=True,
-            prefetch_factor=None,
+            persistent_workers=persistent_workers,
+            prefetch_factor=5,
             multiprocessing_context='spawn' if dataset_class is ParallelParquetTrainDataset else None,
         )
     else:
