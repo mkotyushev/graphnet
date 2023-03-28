@@ -1,51 +1,51 @@
 import numpy as np
 import torch
-import polars as pl
+import dask.dataframe as dd
 import numpy as np
+import pandas as pd
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
 from torch_geometric.data import Data
 
 
 def build_geometry_table(geometry_path):
-    geometry = pl.read_csv(geometry_path)
+    geometry = dd.read_csv(geometry_path)
 
-    geometry = geometry.with_columns([
-        (pl.col('x') / 500).alias('x'),
-        (pl.col('y') / 500).alias('y'),
-        (pl.col('z') / 500).alias('z'),
-        pl.col('sensor_id').cast(pl.Int16).alias('sensor_id'), 
-    ])
+    geometry = geometry.assign(
+        x=geometry['x'] / 500,
+        y=geometry['y'] / 500,
+        z=geometry['z'] / 500,
+        sensor_id=geometry['sensor_id'].astype('int16')
+    )
         
-    return geometry
+    return geometry.compute()
 
 
 def build_mock_table(table_name):
     if table_name == 'data':
-        _data = [[0, 0.0, 0.0, 0.0, 0.0, 0.0, False]]
-        _columns = [
-            ("event_id", pl.Int64),
-            ("x", pl.Float64),
-            ("y", pl.Float64),
-            ("z", pl.Float64),
-            ("time", pl.Float64),
-            ("charge", pl.Float64),
-            ("auxiliary", pl.Boolean),
-        ]
+        _data = {
+            'event_id': [0, 0, 0, 0, 0, 0],
+            'sensor_id': [0, 1, 2, 3, 4, 5],
+            'x': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'y': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'z': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'time': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'charge': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'auxiliary': [False, False, False, False, False, False],
+        }
     elif table_name == 'meta':
-        _data = [[0, 0, 0, 0, 0.0, 0.0]]
-        _columns = [
-            ("batch_id", pl.Int64),
-            ("event_id", pl.Int64),
-            ("first_pulse_index", pl.Int64),
-            ("last_pulse_index", pl.Int64),
-            ("zenith", pl.Float64),
-            ("azimuth", pl.Float64),
-        ]
+        _data = {
+            'batch_id': [0, 0, 0, 0, 0, 0],
+            'event_id': [0, 0, 0, 0, 0, 0],
+            'first_pulse_index': [0, 0, 0, 0, 0, 0],
+            'last_pulse_index': [0, 0, 0, 0, 0, 0],
+            'zenith': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+            'azimuth': [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        }
     else:
         raise ValueError(f'Unknown table name: {table_name}')
 
-    return pl.DataFrame(data=_data or None, columns=_columns)
+    return dd.from_pandas(pd.DataFrame(data=_data), npartitions=1).compute()
 
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
@@ -80,10 +80,14 @@ class ParallelParquetTrainDataset(Dataset):
         self.geometry_table = build_geometry_table(geometry_path)
         self.meta_path = meta_path   
 
-        self.all_indices, self.filepath_to_len = [], dict()
+        self.all_indices, self.filepath_to_index, self.filepath_to_len = [], dict(), dict()
         for filepath in self.filepathes:
-            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
-            self.all_indices.extend(meta[index_column].to_list())
+            meta = dd.read_parquet(
+                self._filepath_to_meta_filepath(filepath), 
+                engine='pyarrow'
+            ).reset_index()
+            self.all_indices.extend(meta[index_column])
+            self.filepath_to_index[filepath] = meta[index_column].values
             self.filepath_to_len[filepath] = len(meta)
 
         # Shared state
@@ -99,7 +103,9 @@ class ParallelParquetTrainDataset(Dataset):
             'meta': build_mock_table('meta'),
         }
         self.index = 0
-        self.order = np.random.permutation(len(self.tables['data']))
+        self.order = np.random.permutation(len(self.tables['meta']))
+        self.indexes = self.tables['meta'].index.values
+        # self.indexes.compute_chunk_sizes()
 
         # Later we need to load actual data
         self.is_initialized = False
@@ -136,22 +142,14 @@ class ParallelParquetTrainDataset(Dataset):
         return self.meta_path / f'train_meta_{batch_id}.parquet'
 
     def _load_data(self, filepath):
-        df = pl.read_parquet(filepath)
-        df = df.join(self.geometry_table, on='sensor_id', how="inner")
-        df = df.groupby("event_id").agg([
-            pl.count(),
-            pl.col("sensor_id").list(),
-            pl.col("x").list(),
-            pl.col("y").list(),
-            pl.col("z").list(),
-            pl.col("time").list(),
-            pl.col("charge").list(),
-            pl.col("auxiliary").list(),]).sort('event_id')
-        return df
+        df = dd.read_parquet(filepath, engine='pyarrow').reset_index()
+        df = df.merge(self.geometry_table, on='sensor_id', how="inner")
+        df = df.set_index('event_id')
+        return df.compute()
                 
     def _load_meta(self, meta_filepath):
-        df = pl.read_parquet(meta_filepath).sort('event_id')
-        return df
+        df = dd.read_parquet(meta_filepath, engine='pyarrow').set_index('event_id')
+        return df.compute()
 
     def _load_next(self):
         with self.lock:
@@ -159,12 +157,15 @@ class ParallelParquetTrainDataset(Dataset):
                 self.remaining_filepathes = self.filepathes[:]
                 np.random.shuffle(self.remaining_filepathes)
             filepath = self.remaining_filepathes.pop()
+
         self.tables = {
             'data': self._load_data(filepath),
             'meta': self._load_meta(self._filepath_to_meta_filepath(filepath)),
         }
         self.index = 0
-        self.order = np.random.permutation(len(self.tables['data']))
+        self.order = np.random.permutation(len(self.tables['meta']))
+        self.indexes = self.tables['meta'].index.values
+        # self.indexes.compute_chunk_sizes()
 
     def _advance(self):
         assert self.is_initialized
@@ -190,7 +191,10 @@ class ParallelParquetTrainDataset(Dataset):
         self, sequential_index: Optional[int]
     ) -> Optional[int]:
         """Return a the event index corresponding to a `sequential_index`."""
-        return self.tables['meta'][self._get_inner_index(), self._index_column]
+        result = self.indexes[self._get_inner_index()]
+        if not isinstance(result, np.int64):
+            result = result.compute()
+        return result
 
     def query_table(
         self,
@@ -221,11 +225,85 @@ class ParallelParquetTrainDataset(Dataset):
                 present in `table`.
         """
         t = self.tables[table]
+
+        # Drop index column if present
+        i = None
+        if self._index_column in columns:
+            i = columns.index(self._index_column)
+            columns = columns[:i] + columns[i + 1:]
         
         if len(set(t.columns).intersection(columns)) != len(columns):
             raise ColumnMissingException
 
-        return t[self._get_inner_index()][columns].rows()
+        result = t.loc[self._get_event_index(sequential_index), columns].values
+        if result.ndim == 1:
+            result = result[None, :]
+        if i is not None:
+            result = np.insert(result, i, self._get_event_index(sequential_index), axis=1)
+        
+        return result.astype(np.float64)
+
+    def _query(
+        self, sequential_index: int
+    ) -> Tuple[
+        List[Tuple[float, ...]],
+        Tuple[Any, ...],
+        Optional[List[Tuple[Any, ...]]],
+        Optional[float],
+    ]:
+        """Query file for event features and truth information.
+
+        The returned lists have lengths correspondings to the number of pulses
+        in the event. Their constituent tuples have lengths corresponding to
+        the number of features/attributes in each output
+
+        Args:
+            sequential_index: Sequentially numbered index
+                (i.e. in [0,len(self))) of the event to query. This _may_
+                differ from the indexation used in `self._indices`.
+
+        Returns:
+            Tuple containing pulse-level event features; event-level truth
+                information; pulse-level truth information; and event-level
+                loss weights, respectively.
+        """
+        features = []
+        for pulsemap in self._pulsemaps:
+            features_pulsemap = self.query_table(
+                pulsemap, self._features, sequential_index, self._selection
+            )
+            features.extend(features_pulsemap)
+
+        truth: Tuple[Any, ...] = self.query_table(
+            self._truth_table, self._truth, sequential_index
+        )[0]
+        if self._node_truth:
+            assert self._node_truth_table is not None
+            node_truth = self.query_table(
+                self._node_truth_table,
+                self._node_truth,
+                sequential_index,
+                self._selection,
+            )
+        else:
+            node_truth = None
+
+        loss_weight: Optional[float] = None  # Default
+        if self._loss_weight_columns is not None:
+            assert self._loss_weight_table is not None
+            loss_weight_list = self._loss_weight_transform(
+                self.query_table(
+                    self._loss_weight_table,
+                    self._loss_weight_columns,
+                    sequential_index,
+                )
+            )
+            if len(loss_weight_list):
+                loss_weight = loss_weight_list[0][0]
+            else:
+                loss_weight = -1.0
+
+        return features, truth, node_truth, loss_weight
 
     def _create_graph(
         self,
@@ -268,9 +346,8 @@ class ParallelParquetTrainDataset(Dataset):
             }
 
         # Catch cases with no reconstructed pulses
-        features = [feature[0] for feature in features[0][1:]]
         if len(features):
-            data = np.asarray(features).T
+            data = np.asarray(features)[:, 1:]
         else:
             data = np.array([]).reshape((0, len(self._features) - 1))
 
