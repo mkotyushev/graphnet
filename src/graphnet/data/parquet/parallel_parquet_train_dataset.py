@@ -26,9 +26,6 @@ def build_geometry_table(geometry_path):
     geometry = pl.read_csv(geometry_path)
 
     geometry = geometry.with_columns([
-        (pl.col('x') / 500).alias('x'),
-        (pl.col('y') / 500).alias('y'),
-        (pl.col('z') / 500).alias('z'),
         pl.col('sensor_id').cast(pl.Int16).alias('sensor_id'), 
     ])
         
