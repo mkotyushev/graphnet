@@ -1,11 +1,6 @@
-import pickle
-import sys
-import traceback
 import numpy as np
 import torch
-import dask.dataframe as dd
 import numpy as np
-import pandas as pd
 import polars as pl
 from typing import Any, Callable, List, Optional, Tuple, Union
 from graphnet.data.dataset import ColumnMissingException, Dataset
@@ -13,16 +8,16 @@ from torch_geometric.data import Data
 
 
 def build_geometry_table(geometry_path):
-    geometry = dd.read_csv(geometry_path)
+    geometry = pl.read_csv(geometry_path)
 
-    geometry = geometry.assign(
-        x=geometry['x'] / 500,
-        y=geometry['y'] / 500,
-        z=geometry['z'] / 500,
-        sensor_id=geometry['sensor_id'].astype('int16')
-    )
-
-    return pl.from_pandas(geometry.compute())
+    geometry = geometry.with_columns([
+        (pl.col('x') / 500).alias('x'),
+        (pl.col('y') / 500).alias('y'),
+        (pl.col('z') / 500).alias('z'),
+        pl.col('sensor_id').cast(pl.Int16).alias('sensor_id'), 
+    ])
+        
+    return geometry
 
 
 # https://www.kaggle.com/code/iafoss/chunk-based-data-loading-with-caching
@@ -111,31 +106,21 @@ class ParallelParquetTrainDataset(Dataset):
         return self.meta_path / f'train_meta_{batch_id}.parquet'
 
     def _load_data(self, filepath):
-        df = dd.read_parquet(filepath, engine='pyarrow').reset_index()
-        df = pl.from_pandas(df.compute())
-        df = df \
-            .join(self.geometry_table, on='sensor_id', how="inner") \
-            .sort('event_id') \
-            .groupby("event_id") \
-            .agg(
-                [
-                    pl.count(),
-                    pl.col("sensor_id").list(),
-                    pl.col("x").list(),
-                    pl.col("y").list(),
-                    pl.col("z").list(),
-                    pl.col("time").list(),
-                    pl.col("charge").list(),
-                    pl.col("auxiliary").list(),
-                ]
-            ) \
-            .sort('event_id')
+        df = pl.read_parquet(filepath)
+        df = df.join(self.geometry_table, on='sensor_id', how="inner")
+        df = df.groupby("event_id").agg([
+            pl.count(),
+            pl.col("sensor_id").list(),
+            pl.col("x").list(),
+            pl.col("y").list(),
+            pl.col("z").list(),
+            pl.col("time").list(),
+            pl.col("charge").list(),
+            pl.col("auxiliary").list(),]).sort('event_id')
         return df
                 
     def _load_meta(self, meta_filepath):
-        df = dd.read_parquet(meta_filepath, engine='pyarrow').reset_index()
-        df = pl.from_pandas(df.compute())
-        df = df.sort('event_id')
+        df = pl.read_parquet(meta_filepath).sort('event_id')
         return df
 
     def _load_next(self):
@@ -201,11 +186,8 @@ class ParallelParquetTrainDataset(Dataset):
     def _get_all_indices(self) -> List[int]:
         all_indices = []
         for filepath in self.filepathes:
-            meta = dd.read_parquet(
-                self._filepath_to_meta_filepath(filepath), 
-                engine='pyarrow'
-            ).reset_index()
-            all_indices.extend(meta[self._index_column])
+            meta = pl.read_parquet(self._filepath_to_meta_filepath(filepath))
+            all_indices.extend(meta[self._index_column].to_list())
         return all_indices
 
     def _get_event_index(
