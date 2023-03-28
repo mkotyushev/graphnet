@@ -173,8 +173,14 @@ class ParallelParquetTrainDataset(Dataset):
         pass
 
     def _get_all_indices(self) -> List[int]:
-        with open('/workspace/icecube/data/train_all_indices.pkl', 'rb') as f:
-            return pickle.load(f)
+        all_indices = []
+        for filepath in self.filepathes:
+            meta = dd.read_parquet(
+                self._filepath_to_meta_filepath(filepath), 
+                engine='pyarrow'
+            ).reset_index()
+            all_indices.extend(meta[self._index_column])
+        return all_indices
 
     def _get_event_index(
         self, sequential_index: Optional[int]
