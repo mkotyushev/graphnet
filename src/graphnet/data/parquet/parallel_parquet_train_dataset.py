@@ -69,6 +69,7 @@ class ParallelParquetTrainDataset(Dataset):
         self.order = None
         self.indexes = None
         self.read_files_count = 0
+        self.is_initialized = False
 
         super().__init__(
             path=path, 
@@ -94,7 +95,11 @@ class ParallelParquetTrainDataset(Dataset):
 
     def _is_init(self, table: str) -> bool:
         assert table in self.tables, f'Unknown table: {table}'
-        return self.tables[table] is not None
+        # If initialized, all the tables should be loaded
+        # TODO: add checks for all the internal state
+        if self.is_initialized:
+            assert all(t is not None for t in self.tables.values())
+        return self.is_initialized
 
     def _get_inner_index(self):
         return int(self.order[self.index])
@@ -136,16 +141,18 @@ class ParallelParquetTrainDataset(Dataset):
         return df
 
     def _load_next(self):
+        # Select file for current worker
         worker_info = torch.utils.data.get_worker_info()
-        print(f'Loading next file for worker {worker_info}, self.read_files_count is {self.read_files_count}...')
-        if worker_info is None:
-            filepath = self.filepathes[self.read_files_count - 1]
-        else:
-            filepath = self.filepathes[
-                worker_info.id::
-                worker_info.num_workers
-            ][self.read_files_count - 1]
-        print(f'filepath is {filepath}')
+        worker_id, num_workers = 0, 1
+        if worker_info is not None:
+            worker_id = worker_info.id
+            num_workers = worker_info.num_workers
+        filepath = self.filepathes[
+            worker_id::
+            num_workers
+        ][self.read_files_count]
+
+        # Update internal state
         self.tables = {
             'data': self._load_data(filepath),
             'meta': self._load_meta(self._filepath_to_meta_filepath(filepath)),
@@ -154,14 +161,29 @@ class ParallelParquetTrainDataset(Dataset):
         self.order = np.random.permutation(len(self.tables['meta']))
         self.indexes = self.tables['meta'][self._index_column]
 
+        # Advance read_files_count
+        if len(self.filepathes) % num_workers != 0:
+            # TODO: len(self.filepathes) + 1 and then truncating 
+            # to len(self.filepathes) allows to take into account 
+            # last "batch" of files which is not full.
+            # Need to rewrite this in a more elegant way
+            self.read_files_count = (self.read_files_count + 1) % ((len(self.filepathes) + 1) // num_workers)
+            if self.read_files_count >= len(self.filepathes):
+                self.read_files_count = 0
+        else:
+            self.read_files_count = (self.read_files_count + 1) % (len(self.filepathes) // num_workers)
+
+        assert self.read_files_count < len(self.filepathes)
+
     def _advance(self):
-        assert self.read_files_count > 0
+        assert self.is_initialized, 'Dataset is not initialized'
         
         self.index += 1
 
         if self.index >= len(self.tables['data']):
-            self.read_files_count = (self.read_files_count + 1) % len(self.filepathes)
             self._load_next()
+
+        assert self.index < len(self.tables['data'])
 
     # Override abstract method(s)
     def _init(self) -> None:
@@ -416,10 +438,10 @@ class ParallelParquetTrainDataset(Dataset):
 
     def __getitem__(self, sequential_index: int) -> Data:
         # Load first chunk inside worker
-        if self.read_files_count == 0:
-            self.read_files_count = (self.read_files_count + 1) % len(self.filepathes)
+        if not self.is_initialized:
             self.geometry_table = build_geometry_table(self.geometry_path)
             self._load_next()
+            self.is_initialized = True
         
         # Here sequential_index is actually not relevant
         # because we are using the inner index
