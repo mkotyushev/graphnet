@@ -35,7 +35,6 @@ class Model(Configurable, LightningModule, LoggerMixin, ABC):
         ckpt_path: Optional[str] = None,
         logger: Optional[Logger] = None,
         log_every_n_steps: int = 1,
-        gradient_clip_val: Optional[float] = None,
         distribution_strategy: Optional[str] = "ddp",
         **trainer_kwargs: Any,
     ) -> None:
@@ -54,7 +53,6 @@ class Model(Configurable, LightningModule, LoggerMixin, ABC):
             callbacks=callbacks,
             log_every_n_steps=log_every_n_steps,
             logger=logger,
-            gradient_clip_val=gradient_clip_val,
             strategy=distribution_strategy,
             **trainer_kwargs,
         )
@@ -83,7 +81,6 @@ class Model(Configurable, LightningModule, LoggerMixin, ABC):
         ckpt_path: Optional[str] = None,
         logger: Optional[Logger] = None,
         log_every_n_steps: int = 1,
-        gradient_clip_val: Optional[float] = None,
         distribution_strategy: Optional[str] = "ddp",
         **trainer_kwargs: Any,
     ) -> None:
@@ -97,7 +94,6 @@ class Model(Configurable, LightningModule, LoggerMixin, ABC):
             ckpt_path=ckpt_path,
             logger=logger,
             log_every_n_steps=log_every_n_steps,
-            gradient_clip_val=gradient_clip_val,
             distribution_strategy=distribution_strategy,
             **trainer_kwargs,
         )
