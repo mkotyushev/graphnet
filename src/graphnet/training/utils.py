@@ -96,7 +96,7 @@ def make_dataloader(
         if dataset_class is ParallelParquetTrainDataset:
             multiprocessing_context = 'spawn'
             worker_init_fn = parallel_parquet_worker_init_fn
-            timeout = desync_timeout_s + 1.0  # add some spare time
+            timeout = desync_timeout_s * 2.0  # add some spare time
 
             persistent_workers = True
 
