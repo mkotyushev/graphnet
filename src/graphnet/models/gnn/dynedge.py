@@ -1,4 +1,5 @@
 """Implementation of the DynEdge GNN model architecture."""
+from collections import OrderedDict
 from typing import List, Optional, Sequence, Tuple, Union
 
 import torch
@@ -40,9 +41,10 @@ class DynEdge(GNN):
         readout_layer_sizes: Optional[List[int]] = None,
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
         add_global_variables_after_pooling: bool = False,
-        bias: bool = True,
         fix_points: Optional[List[bool]] = None,
-        use_bn: bool = False,
+        bias: bool = True,
+        bn: bool = False,
+        dropout: Optional[float] = None,
     ):
         """Construct `DynEdge`.
 
@@ -78,9 +80,9 @@ class DynEdge(GNN):
                 operations.
             bias: if `True`, then the layers use bias weights else they don't.
         """
-        self.bn_builder = None
+        self.dropout_builder, self.dropout, self.bn_builder = None, None, None
         if fix_points is not None:
-            if use_bn:
+            if bn:
                 self.bn_builder = lambda *args, **kwargs: SimplexBatchNorm1d(
                     *args, **kwargs, fix_points=fix_points
                 )
@@ -88,9 +90,12 @@ class DynEdge(GNN):
                 *args, **kwargs, fix_points=fix_points
             )
         else:
-            if use_bn:
+            if bn:
                 self.bn_builder = torch.nn.BatchNorm1d
             self.linear_builder = torch.nn.Linear
+        if dropout is not None:
+            self.dropout_builder = torch.nn.Dropout
+            self.dropout = dropout
         self.activation_builder = torch.nn.LeakyReLU
         # Latent feature subset for computing nearest neighbours in DynEdge.
         if features_subset is None:
@@ -204,10 +209,14 @@ class DynEdge(GNN):
             ):
                 if ix == 0:
                     nb_in *= 2
-                layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
-                layers.append(self.activation_builder())
+                linear_block = OrderedDict()
+                linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
+                linear_block['activation'] = self.activation_builder()
+                if self.dropout_builder is not None:
+                    linear_block['dropout'] = self.dropout_builder(self.dropout)
                 if self.bn_builder is not None:
-                    layers.append(self.bn_builder(nb_out))
+                    linear_block['bn'] = self.bn_builder(nb_out)
+                layers.append(torch.nn.Sequential(linear_block))
 
             conv_layer = DynEdgeConv(
                 torch.nn.Sequential(*layers),
@@ -230,10 +239,14 @@ class DynEdge(GNN):
             self._post_processing_layer_sizes
         )
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            post_processing_layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
-            post_processing_layers.append(self.activation_builder())
+            linear_block = OrderedDict()
+            linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
+            linear_block['activation'] = self.activation_builder()
+            if self.dropout_builder is not None:
+                linear_block['dropout'] = self.dropout_builder(self.dropout)
             if self.bn_builder is not None:
-                post_processing_layers.append(self.bn_builder(nb_out))
+                linear_block['bn'] = self.bn_builder(nb_out)
+            post_processing_layers.append(torch.nn.Sequential(linear_block))
 
         self._post_processing = torch.nn.Sequential(*post_processing_layers)
 
@@ -250,10 +263,14 @@ class DynEdge(GNN):
         readout_layers = []
         layer_sizes = [nb_latent_features] + list(self._readout_layer_sizes)
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            readout_layers.append(self.linear_builder(nb_in, nb_out, bias=self._bias))
-            readout_layers.append(self.activation_builder())
+            linear_block = OrderedDict()
+            linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
+            linear_block['activation'] = self.activation_builder()
+            if self.dropout_builder is not None:
+                linear_block['dropout'] = self.dropout_builder(self.dropout)
             if self.bn_builder is not None:
-                readout_layers.append(self.bn_builder(nb_out))
+                linear_block['bn'] = self.bn_builder(nb_out)
+            readout_layers.append(torch.nn.Sequential(linear_block))
 
         self._readout = torch.nn.Sequential(*readout_layers)
 
