@@ -45,6 +45,7 @@ class DynEdge(GNN):
         bias: bool = True,
         bn: bool = False,
         dropout: Optional[float] = None,
+        repeat_input: int = 1
     ):
         """Construct `DynEdge`.
 
@@ -180,6 +181,8 @@ class DynEdge(GNN):
             add_global_variables_after_pooling
         )
 
+        self.repeat_input = repeat_input
+
         # Base class constructor
         super().__init__(nb_inputs, self._readout_layer_sizes[-1])
 
@@ -231,7 +234,7 @@ class DynEdge(GNN):
         # Post-processing operations
         nb_latent_features = (
             sum(sizes[-1] for sizes in self._dynedge_layer_sizes)
-            + nb_input_features
+            + nb_input_features * self.repeat_input
         )
 
         post_processing_layers = []
@@ -345,7 +348,7 @@ class DynEdge(GNN):
             x = torch.cat((x, global_variables_distributed), dim=1)
 
         # DynEdge-convolutions
-        skip_connections = [x]
+        skip_connections = [x] * self.repeat_input
         for conv_layer in self._conv_layers:
             x, edge_index = conv_layer(x, edge_index, batch)
             skip_connections.append(x)
