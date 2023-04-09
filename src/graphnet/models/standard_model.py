@@ -38,6 +38,7 @@ class StandardModel(Model):
         scheduler_class: Optional[type] = None,
         scheduler_kwargs: Optional[Dict] = None,
         scheduler_config: Optional[Dict] = None,
+        **kwargs: Any,
     ) -> None:
         """Construct `StandardModel`."""
         # Base class constructor
