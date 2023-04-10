@@ -609,15 +609,10 @@ class S2AbsCosineLoss(LossFunction):
         target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
         target_z = torch.cos(target[:, 0])
         target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
-        with torch.no_grad():
-            assert torch.all(prediction >= 0)
-            assert torch.isclose(torch.norm(target_xyz, p=2, dim=1), 1.0)
-            assert torch.isclose(torch.norm(prediction, p=2, dim=1), 1.0)
         return cosine_similarity(prediction, torch.abs(target_xyz))
     
 
 class S2SignCrossEntropyLoss(LossFunction):
-    n_classes = 8
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
@@ -662,8 +657,6 @@ class S2SignCrossEntropyLoss(LossFunction):
         # 1, 1, 0 -> 6
         # 1, 1, 1 -> 7
         target_sign_class = 4 * target_x_sign + 2 * target_y_sign + 1 * target_z_sign
+        assert torch.all(target_sign_class >= 0) and torch.all(target_sign_class < 8)
 
-        # Convert to one-hot
-        target_sign_one_hot = one_hot(target_sign_class, self.n_classes)
-
-        return cross_entropy(prediction, target_sign_one_hot)
+        return cross_entropy(prediction, target_sign_class, reduction="none")
