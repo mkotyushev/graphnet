@@ -202,4 +202,4 @@ class StandardModel(Model):
         if self.log_grad_norm_verbose:
             self.log_dict(norms)
         else:
-            self.log('grad_2_norm_total', norms['grad_2_norm_total'])
+            self.log('grad_2.0_norm_total', norms['grad_2.0_norm_total'])
