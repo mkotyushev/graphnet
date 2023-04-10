@@ -17,6 +17,7 @@ from torch.nn.functional import (
     cross_entropy,
     binary_cross_entropy,
     softplus,
+    cosine_similarity
 )
 
 from graphnet.utilities.config import save_model_config
@@ -589,3 +590,80 @@ class EuclidianDistanceLossCos(LossFunction):
         cos_pred = prediction[:, 0]
 
         return (cos_true - cos_pred).abs()
+
+
+class S2AbsCosineLoss(LossFunction):
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate cosine distance between abs of predicted and target
+        spherical coordinates on unit sphere.
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 3]
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            Elementwise cosine distance between vectors 
+            loss terms. Shape [N,]
+        """
+        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
+        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
+        target_z = torch.cos(target[:, 0])
+        target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
+        with torch.no_grad():
+            assert torch.all(prediction >= 0)
+            assert torch.isclose(torch.norm(target_xyz, p=2, dim=1), 1.0)
+            assert torch.isclose(torch.norm(prediction, p=2, dim=1), 1.0)
+        return cosine_similarity(prediction, torch.abs(target_xyz))
+    
+
+class S2SignCrossEntropyLoss(LossFunction):
+    n_classes = 8
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate absolute difference between predicted and target
+        spherical coordinates.
+
+        Args:
+            prediction: X, Y, Z sign logits. Must have shape [N, 8]
+            target: Target (zenith, azimuth) tensor, extracted from graph object.
+
+        Returns:
+            Cross-entropy loss of sign class. Shape [N,]
+        """
+        # Convert to x, y, z
+        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
+        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
+        target_z = torch.cos(target[:, 0])
+
+        # Get sign
+        target_x_sign = torch.sign(target_x)
+        target_y_sign = torch.sign(target_y)
+        target_z_sign = torch.sign(target_z)
+
+        # Keep only 0 and 1, 0 is consigered negative
+        target_x_sign[target_x_sign == -1] = 0
+        target_y_sign[target_y_sign == -1] = 0
+        target_z_sign[target_z_sign == -1] = 0
+
+        # Convert to long
+        target_x_sign = target_x_sign.long()
+        target_y_sign = target_y_sign.long()
+        target_z_sign = target_z_sign.long()
+
+        # Convert to decimal
+        # 0, 0, 0 -> 0	
+        # 0, 0, 1 -> 1
+        # 0, 1, 0 -> 2
+        # 0, 1, 1 -> 3
+        # 1, 0, 0 -> 4
+        # 1, 0, 1 -> 5
+        # 1, 1, 0 -> 6
+        # 1, 1, 1 -> 7
+        target_sign_class = 4 * target_x_sign + 2 * target_y_sign + 1 * target_z_sign
+
+        # Convert to one-hot
+        target_sign_one_hot = one_hot(target_sign_class, self.n_classes)
+
+        return cross_entropy(prediction, target_sign_one_hot)

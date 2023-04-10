@@ -255,3 +255,22 @@ class AngleReconstructionSincosWithKappa(AngleReconstructionSinCos):
         kappa = torch.linalg.vector_norm(x, dim=1) + eps_like(x)
         sincos = super()._forward(x)
         return torch.concatenate((sincos, kappa[:, None]), dim=1)
+
+
+# https://arxiv.org/pdf/1904.05404.pdf
+class S2AbsDirectionReconstruction(Task):
+    nb_inputs = 3
+    
+    def _forward(self, x: Tensor) -> Tensor:
+        x = torch.exp(x)
+        A = torch.sqrt(torch.sum(torch.square(x), dim=1, keepdim=True))
+        x = x / A
+        return x
+    
+
+class S2SignDirectionReconstruction(Task):
+    nb_inputs = 8
+    
+    def _forward(self, x: Tensor) -> Tensor:
+        return x
+
