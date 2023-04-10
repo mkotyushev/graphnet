@@ -198,7 +198,7 @@ class StandardModel(Model):
         """Log gradient norms."""
         # Compute the 2-norm for each layer
         # If using mixed precision, the gradients are already unscaled here
-        norms = grad_norm(self.layer, norm_type=2)
+        norms = grad_norm(self, norm_type=2)
         if self.log_grad_norm_verbose:
             self.log_dict(norms)
         else:
