@@ -609,7 +609,7 @@ class S2AbsCosineLoss(LossFunction):
         target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
         target_z = torch.cos(target[:, 0])
         target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
-        return cosine_similarity(prediction, torch.abs(target_xyz))
+        return 1 - cosine_similarity(prediction, torch.abs(target_xyz))
     
 
 class S2SignCrossEntropyLoss(LossFunction):
