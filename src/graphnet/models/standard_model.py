@@ -15,6 +15,7 @@ from graphnet.models.detector.detector import Detector
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.model import Model
 from graphnet.models.task import Task
+from pytorch_lightning.utilities import grad_norm
 
 
 class StandardModel(Model):
@@ -65,6 +66,7 @@ class StandardModel(Model):
         self._scheduler_class = scheduler_class
         self._scheduler_kwargs = scheduler_kwargs or dict()
         self._scheduler_config = scheduler_config or dict()
+        self.log_grad_norm_verbose = kwargs.get("log_grad_norm_verbose", False)
 
     def configure_optimizers(self) -> Dict[str, Any]:
         """Configure the model's optimizer(s)."""
@@ -191,3 +193,13 @@ class StandardModel(Model):
             gpus=gpus,
             distribution_strategy=distribution_strategy,
         )
+
+    def on_before_optimizer_step(self, optimizer):
+        """Log gradient norms."""
+        # Compute the 2-norm for each layer
+        # If using mixed precision, the gradients are already unscaled here
+        norms = grad_norm(self.layer, norm_type=2)
+        if self.log_grad_norm_verbose:
+            self.log_dict(norms)
+        else:
+            self.log('grad_2_norm_total', norms['grad_2_norm_total'])
