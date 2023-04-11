@@ -26,6 +26,13 @@ def remap_values(remapping: LongTensor, x: LongTensor) -> LongTensor:
     index = torch.bucketize(x.ravel(), remapping[0])
     return remapping[1][index].reshape(x.shape)
 
+
+class Float32BatchNorm1d(torch.nn.BatchNorm1d):
+    def forward(self, input):
+        with torch.cuda.amp.autocast(enabled=False, dtype=torch.float32):
+            return super().forward(input)
+
+
 class DynEdge(GNN):
     """DynEdge (dynamical edge convolutional) model."""
 
@@ -84,6 +91,7 @@ class DynEdge(GNN):
         self.dropout_builder, self.dropout, self.bn_builder = None, None, None
         if fix_points is not None:
             if bn:
+                # TODO: replace with to autocast version
                 self.bn_builder = lambda *args, **kwargs: SimplexBatchNorm1d(
                     *args, **kwargs, fix_points=fix_points
                 )
@@ -92,7 +100,7 @@ class DynEdge(GNN):
             )
         else:
             if bn:
-                self.bn_builder = torch.nn.BatchNorm1d
+                self.bn_builder = Float32BatchNorm1d
             self.linear_builder = torch.nn.Linear
         if dropout is not None:
             self.dropout_builder = torch.nn.Dropout
