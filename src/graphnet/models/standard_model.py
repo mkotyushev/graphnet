@@ -139,12 +139,12 @@ class StandardModel(Model):
         between the training and validation step.
         """
         preds = self(batch)
-        loss = self.compute_loss(preds, batch)
-        return loss
+        loss, losses = self.compute_loss(preds, batch)
+        return loss, losses
 
     def training_step(self, train_batch: Data, batch_idx: int) -> Tensor:
         """Perform training step."""
-        loss = self.shared_step(train_batch, batch_idx)
+        loss, losses = self.shared_step(train_batch, batch_idx)
         self.log(
             "train_loss",
             loss,
@@ -154,16 +154,32 @@ class StandardModel(Model):
             on_step=True,
             sync_dist=True,
         )
+        self.log_dict(
+            {f'task_{i}_train_loss': _loss for i, _loss in enumerate(losses)},
+            batch_size=self._get_batch_size(train_batch),
+            prog_bar=False,
+            on_epoch=True,
+            on_step=True,
+            sync_dist=True,
+        )
         return loss
 
     def validation_step(self, val_batch: Data, batch_idx: int) -> Tensor:
         """Perform validation step."""
-        loss = self.shared_step(val_batch, batch_idx)
+        loss, losses = self.shared_step(val_batch, batch_idx)
         self.log(
             "val_loss",
             loss,
             batch_size=self._get_batch_size(val_batch),
             prog_bar=True,
+            on_epoch=True,
+            on_step=False,
+            sync_dist=True,
+        )
+        self.log_dict(
+            {f'task_{i}_val_loss': _loss for i, _loss in enumerate(losses)},
+            batch_size=self._get_batch_size(val_batch),
+            prog_bar=False,
             on_epoch=True,
             on_step=False,
             sync_dist=True,
@@ -193,9 +209,9 @@ class StandardModel(Model):
                         for weigth, loss in zip(self._tasks_weights, losses)
                     ]
                 )
-            )
+            ), losses
         else:
-            return torch.sum(torch.stack(losses))
+            return torch.sum(torch.stack(losses)), losses
 
     def _get_batch_size(self, data: Data) -> int:
         return torch.numel(torch.unique(data.batch))
