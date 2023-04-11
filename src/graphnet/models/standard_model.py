@@ -43,6 +43,7 @@ def state_norm(module: torch.nn.Module, norm_type: Union[float, int, str], group
     norms = {
         f"state_{norm_type}_norm{group_separator}{name}": p.data.float().norm(norm_type)
         for name, p in module.state_dict().items()
+        if not 'num_batches_tracked' in name
     }
     if norms:
         total_norm = torch.tensor(list(norms.values())).norm(norm_type)
