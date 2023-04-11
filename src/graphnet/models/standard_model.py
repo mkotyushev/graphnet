@@ -18,10 +18,10 @@ from graphnet.models.task import Task
 from pytorch_lightning.utilities import grad_norm
 
 
-def weight_norm(module: torch.nn.Module, norm_type: Union[float, int, str], group_separator: str = "/") -> Dict[str, float]:
-    """Compute each parameter's norm and their overall norm.
+def state_norm(module: torch.nn.Module, norm_type: Union[float, int, str], group_separator: str = "/") -> Dict[str, float]:
+    """Compute each state dict tensor's norm and their overall norm.
 
-    The overall norm is computed over all parameters together, as if they
+    The overall norm is computed over all tensor together, as if they
     were concatenated into a single vector.
 
     Args:
@@ -29,11 +29,11 @@ def weight_norm(module: torch.nn.Module, norm_type: Union[float, int, str], grou
         norm_type: The type of the used p-norm, cast to float if necessary.
             Can be ``'inf'`` for infinity norm.
         group_separator: The separator string used by the logger to group
-            the parameters norms in their own subfolder instead of the logs one.
+            the tensor norms in their own subfolder instead of the logs one.
 
     Return:
         norms: The dictionary of p-norms of each parameter's gradient and
-            a special entry for the total p-norm of the parameters viewed
+            a special entry for the total p-norm of the tensor viewed
             as a single vector.
     """
     norm_type = float(norm_type)
@@ -41,12 +41,12 @@ def weight_norm(module: torch.nn.Module, norm_type: Union[float, int, str], grou
         raise ValueError(f"`norm_type` must be a positive number or 'inf' (infinity norm). Got {norm_type}")
 
     norms = {
-        f"weight_{norm_type}_norm{group_separator}{name}": p.data.norm(norm_type)
-        for name, p in module.named_parameters()
+        f"state_{norm_type}_norm{group_separator}{name}": p.data.float().norm(norm_type)
+        for name, p in module.state_dict().items()
     }
     if norms:
         total_norm = torch.tensor(list(norms.values())).norm(norm_type)
-        norms[f"weight_{norm_type}_norm_total"] = total_norm
+        norms[f"state_{norm_type}_norm_total"] = total_norm
     return norms
 
 
@@ -236,8 +236,8 @@ class StandardModel(Model):
         else:
             self.log('grad_2.0_norm_total', norms['grad_2.0_norm_total'])
 
-        norms = weight_norm(self, norm_type=2)
+        norms = state_norm(self, norm_type=2)
         if self.log_norm_verbose:
             self.log_dict(norms)
         else:
-            self.log('weight_2.0_norm_total', norms['weight_2.0_norm_total'])
+            self.log('state_2.0_norm_total', norms['state_2.0_norm_total'])
