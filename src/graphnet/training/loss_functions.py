@@ -605,11 +605,14 @@ class S2AbsCosineLoss(LossFunction):
             Elementwise cosine distance between vectors 
             loss terms. Shape [N,]
         """
-        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
-        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
-        target_z = torch.cos(target[:, 0])
-        target_xyz = torch.stack([target_x, target_y, target_z], dim=1)
-        return 1 - cosine_similarity(prediction, torch.abs(target_xyz))
+        target = target.reshape(-1, 3)
+
+        assert prediction.dim() == 2 and prediction.size()[1] == 3, \
+            f"Prediction must have shape [N, 3], but has shape {prediction.shape}"
+        assert target.dim() == 2 and target.size()[1] == 3, \
+            f"Target must have shape [N, 3], but has shape {target.shape}"
+        
+        return 1 - cosine_similarity(prediction, target)
     
 
 class S2SignCrossEntropyLoss(LossFunction):
@@ -627,27 +630,24 @@ class S2SignCrossEntropyLoss(LossFunction):
         Returns:
             Cross-entropy loss of sign class. Shape [N,]
         """
-        # Convert to x, y, z
-        target_x = torch.cos(target[:, 1]) * torch.sin(target[:, 0])
-        target_y = torch.sin(target[:, 1]) * torch.sin(target[:, 0])
-        target_z = torch.cos(target[:, 0])
+        target = target.reshape(-1, 3)
 
-        # Get sign
-        target_x_sign = torch.sign(target_x)
-        target_y_sign = torch.sign(target_y)
-        target_z_sign = torch.sign(target_z)
+        assert prediction.dim() == 2 and prediction.size()[1] == 8, \
+            f"Prediction must have shape [N, 8], but has shape {prediction.shape}"
+        assert target.dim() == 2 and target.size()[1] == 3, \
+            f"Target must have shape [N, 3], but has shape {target.shape}"
 
-        # Keep only 0 and 1, 0 is consigered negative
-        target_x_sign[target_x_sign == -1] = 0
-        target_y_sign[target_y_sign == -1] = 0
-        target_z_sign[target_z_sign == -1] = 0
+        # Get sign, keep only 0 and 1, 0 is considered negative
+        target_sign = torch.sign(target)
+        target_sign[target_sign == -1] = 0
 
         # Convert to long
-        target_x_sign = target_x_sign.long()
-        target_y_sign = target_y_sign.long()
-        target_z_sign = target_z_sign.long()
+        target_x_sign = target_sign[:, 0].long()
+        target_y_sign = target_sign[:, 1].long()
+        target_z_sign = target_sign[:, 2].long()
 
         # Convert to decimal
+        # x, y, z -> sign class
         # 0, 0, 0 -> 0	
         # 0, 0, 1 -> 1
         # 0, 1, 0 -> 2
@@ -657,6 +657,5 @@ class S2SignCrossEntropyLoss(LossFunction):
         # 1, 1, 0 -> 6
         # 1, 1, 1 -> 7
         target_sign_class = 4 * target_x_sign + 2 * target_y_sign + 1 * target_z_sign
-        assert torch.all(target_sign_class >= 0) and torch.all(target_sign_class < 8)
 
         return cross_entropy(prediction, target_sign_class, reduction="none")
