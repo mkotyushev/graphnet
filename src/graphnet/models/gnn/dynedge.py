@@ -225,8 +225,6 @@ class DynEdge(GNN):
                 linear_block['activation'] = self.activation_builder()
                 if self.dropout_builder is not None:
                     linear_block['dropout'] = self.dropout_builder(self.dropout)
-                if self.bn_builder is not None:
-                    linear_block['bn'] = self.bn_builder(nb_out)
                 layers.append(torch.nn.Sequential(linear_block))
 
             conv_layer = DynEdgeConv(
