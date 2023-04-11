@@ -612,8 +612,34 @@ class S2AbsCosineLoss(LossFunction):
         assert target.dim() == 2 and target.size()[1] == 3, \
             f"Target must have shape [N, 3], but has shape {target.shape}"
         
-        return 1 - cosine_similarity(prediction, target)
-    
+        return 1 - cosine_similarity(prediction, torch.abs(target))
+
+
+class S2AbsSoftCrossEntropyLoss(LossFunction):
+    def _forward(self, prediction: Tensor, target: Tensor) -> Tensor:
+        """Calculate cross entropy loss considering p^2 as predicted
+        probabilities and y^2 as soft probabilistic labels.
+
+        See paragraph 3.1 in https://arxiv.org/pdf/1904.05404.pdf 
+        for details.
+
+        Args:
+            prediction: Output of the model. Must have shape [N, 3]
+            target: Target tensor, extracted from graph object.
+
+        Returns:
+            Elementwise crossentropy loss terms between vectors. 
+            Shape [N,]
+        """
+        target = target.reshape(-1, 3)
+
+        assert prediction.dim() == 2 and prediction.size()[1] == 3, \
+            f"Prediction must have shape [N, 3], but has shape {prediction.shape}"
+        assert target.dim() == 2 and target.size()[1] == 3, \
+            f"Target must have shape [N, 3], but has shape {target.shape}"
+        
+        return cross_entropy(prediction ** 2, target ** 2, reduction="none")
+
 
 class S2SignCrossEntropyLoss(LossFunction):
     def __init__(self, **kwargs):
