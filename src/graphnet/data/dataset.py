@@ -155,6 +155,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         max_n_pulses: Optional[int] = None,
         max_n_pulses_strategy: Optional[str] = None,
         transforms: Optional[List[Callable]] = None,
+        graph_transform: Optional[Callable] = None,
     ):
         """Construct Dataset.
 
@@ -212,6 +213,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
             transforms: List of callables to apply to events before
                 constructing graph objects. Each callable should take a single
                 argument, which is the event, and return the transformed event.
+            graph_transform: PyG graph transform to apply to the graph objects
         """
         # Check(s)
         if isinstance(pulsemaps, str):
@@ -234,6 +236,7 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
         self._loss_weight_default_value = loss_weight_default_value
         self._loss_weight_transform = loss_weight_transform
         self._transforms = transforms
+        self._graph_transform = graph_transform
         
         self._max_n_pulses = max_n_pulses
         if max_n_pulses is not None:
@@ -671,6 +674,11 @@ class Dataset(torch.utils.data.Dataset, Configurable, LoggerMixin, ABC):
 
         # Add Dataset Path. Useful if multiple datasets are concatenated.
         graph["dataset_path"] = self._path
+
+        # Apply graph transform
+        if self._graph_transform is not None:
+            graph = self._graph_transform(graph)
+
         return graph
 
     def _get_labels(self, truth_dict: Dict[str, Any]) -> Dict[str, Any]:

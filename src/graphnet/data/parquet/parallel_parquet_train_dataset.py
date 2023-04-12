@@ -389,6 +389,10 @@ class ParallelParquetTrainDataset(Dataset):
         # Add Dataset Path. Useful if multiple datasets are concatenated.
         graph["dataset_path"] = self._path
 
+        # Apply graph transform
+        if self._graph_transform is not None:
+            graph = self._graph_transform(graph)
+
         return graph
 
     def __getitem__(self, sequential_index: int) -> Data:
