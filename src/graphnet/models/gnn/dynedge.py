@@ -336,6 +336,7 @@ class DynEdge(GNN):
                     nb_neighbors=self._nb_neighbours,
                     features_subset=self._features_subset,
                 )
+                nb_latent_features = nb_out
             else:
                 conv_layer = GPSConv(
                     self._gps_hidden_size,
@@ -346,8 +347,7 @@ class DynEdge(GNN):
                     heads=self._gps_heads,
                 )
             self._conv_layers.append(conv_layer)
-
-            nb_latent_features = nb_out
+            nb_latent_features = self._gps_hidden_size
 
         # Post-processing operations
         if self._gps:
@@ -488,7 +488,7 @@ class DynEdge(GNN):
                     edge_attr_to_pass = edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
             else:
-                x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
+                x = conv_layer(x, edge_index, batch)
             skip_connections.append(x)
 
         # Skip-cat
