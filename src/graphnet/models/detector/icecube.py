@@ -132,6 +132,11 @@ class IceCubeKaggle(Detector):
         # https://www.kaggle.com/competitions/icecube-neutrinos-in-deep-ice/
         # discussion/382131
         activation_speed = edge_distance * 500.0 / torch.abs(time_diff * 3.0e4) / 0.3
+        activation_speed = torch.where(
+            torch.isnan(activation_speed) | torch.isinf(activation_speed), 
+            torch.full_like(activation_speed, 0.0), 
+            activation_speed
+        )
 
         data.edge_attr = torch.stack(
             [
