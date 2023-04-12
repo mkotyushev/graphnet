@@ -6,7 +6,7 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
-from torch_geometric.nn.conv import GPSConv, GINEConv
+from torch_geometric.nn.conv import GPSConv, GINEConv, ResGatedGraphConv
 
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.utilities.config import save_model_config
@@ -305,34 +305,33 @@ class DynEdge(GNN):
         nb_latent_features = nb_input_features
         nb_edge_attrs = self._nb_edge_attrs
         for conv_ix, sizes in enumerate(self._dynedge_layer_sizes):
-            layers = []
-            layer_sizes = []
-            if self._gps:
-                layer_sizes.append(self._gps_hidden_size)
-            else:
-                layer_sizes.append(nb_latent_features)
-            layer_sizes = layer_sizes + list(sizes)
-            for ix, (nb_in, nb_out) in enumerate(
-                zip(layer_sizes[:-1], layer_sizes[1:])
-            ):
-                if ix == 0 and not self._gps:
-                    nb_in *= 2
-                    if conv_ix == 0:
-                        nb_in += nb_edge_attrs
-                linear_block = LinearBlock(
-                    nb_in,
-                    nb_out,
-                    bias=self._bias,
-                    linear_builder=self.linear_builder,
-                    bn_builder=None,  # no batch norm for local conv
-                    activation_builder=self.activation_builder,
-                    dropout=self.dropout,
-                )
-                layers.append(linear_block)
-            nn = torch.nn.Sequential(*layers)
             if not self._gps:
+                layers = []
+                layer_sizes = []
+                if self._gps:
+                    layer_sizes.append(self._gps_hidden_size)
+                else:
+                    layer_sizes.append(nb_latent_features)
+                layer_sizes = layer_sizes + list(sizes)
+                for ix, (nb_in, nb_out) in enumerate(
+                    zip(layer_sizes[:-1], layer_sizes[1:])
+                ):
+                    if ix == 0 and not self._gps:
+                        nb_in *= 2
+                        if conv_ix == 0:
+                            nb_in += nb_edge_attrs
+                    linear_block = LinearBlock(
+                        nb_in,
+                        nb_out,
+                        bias=self._bias,
+                        linear_builder=self.linear_builder,
+                        bn_builder=None,  # no batch norm for local conv
+                        activation_builder=self.activation_builder,
+                        dropout=self.dropout,
+                    )
+                    layers.append(linear_block)
                 conv_layer = DynEdgeConv(
-                    nn,
+                    torch.nn.Sequential(*layers),
                     aggr="add",
                     nb_neighbors=self._nb_neighbours,
                     features_subset=self._features_subset,
@@ -340,7 +339,10 @@ class DynEdge(GNN):
             else:
                 conv_layer = GPSConv(
                     self._gps_hidden_size,
-                    GINEConv(nn, edge_dim=self._gps_hidden_size),
+                    ResGatedGraphConv(
+                        in_channels=self._gps_hidden_size, 
+                        out_channels=self._gps_hidden_size,
+                    ),
                     heads=self._gps_heads,
                 )
             self._conv_layers.append(conv_layer)
