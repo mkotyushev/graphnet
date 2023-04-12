@@ -41,10 +41,34 @@ def parallel_parquet_worker_init_fn(worker_id):
 def build_geometry_table(geometry_path):
     geometry = pl.read_csv(geometry_path)
 
+    # Get sensor type
+    # https://www.kaggle.com/competitions/icecube-neutrinos-in-deep-ice/
+    # discussion/381702
+    string_id = geometry['sensor_id'] // 60
+    depth_id = geometry['sensor_id'] % 60
+
+    main_sensor = (string_id < 78)
+    deep_veto = (string_id >= 78) & (depth_id < 10)
+    deep_core = (string_id >= 78) & (depth_id >= 10)
+
+    geometry = geometry.with_columns([
+        pl.lit(0).alias('sensor_type'),
+    ])
+    geometry = geometry.with_columns([
+        pl.when(main_sensor).then(0).otherwise(pl.col('sensor_type')).alias('sensor_type'),
+    ])
+    geometry = geometry.with_columns([
+        pl.when(deep_veto).then(1).otherwise(pl.col('sensor_type')).alias('sensor_type'),
+    ])
+    geometry = geometry.with_columns([
+        pl.when(deep_core).then(2).otherwise(pl.col('sensor_type')).alias('sensor_type'),
+    ])
+
     geometry = geometry.with_columns([
         pl.col('sensor_id').cast(pl.Int16).alias('sensor_id'), 
+        pl.col('sensor_type').cast(pl.Int16).alias('sensor_type'), 
     ])
-        
+
     return geometry
 
 
@@ -139,15 +163,19 @@ class ParallelParquetTrainDataset(Dataset):
     def _load_data(self, filepath):
         df = pl.read_parquet(filepath)
         df = df.join(self.geometry_table, on='sensor_id', how="inner")
-        df = df.groupby("event_id").agg([
-            pl.count(),
-            pl.col("sensor_id").list(),
-            pl.col("x").list(),
-            pl.col("y").list(),
-            pl.col("z").list(),
-            pl.col("time").list(),
-            pl.col("charge").list(),
-            pl.col("auxiliary").list(),]).sort('event_id')
+        df = df.groupby("event_id").agg(
+            [
+                pl.count(),
+                pl.col("sensor_id").list(),
+                pl.col("x").list(),
+                pl.col("y").list(),
+                pl.col("z").list(),
+                pl.col("time").list(),
+                pl.col("charge").list(),
+                pl.col("auxiliary").list(),
+                pl.col("sensor_type").list(),
+            ]
+        ).sort('event_id')
         return df
                 
     def _load_meta(self, meta_filepath):

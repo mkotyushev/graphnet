@@ -61,14 +61,81 @@ class IceCubeKaggle(Detector):
         # Check(s)
         self._validate_features(data)
 
+        # Node features
         # Preprocessing
         data.x[:, 0] /= 500.0  # x
         data.x[:, 1] /= 500.0  # y
         data.x[:, 2] /= 500.0  # z
         data.x[:, 3] = (data.x[:, 3] - 1.0e04) / 3.0e4  # time
         data.x[:, 4] = torch.log10(data.x[:, 4]) / 3.0  # charge
+        # data.x[:, 5] is bool auxilaty, no need to normalize
+        data.x[:, 6] /= 2.0 # sensor group
+
+        # Edge attributes
+
+        # Get edge XYZ vector
+        edge_x = data.x[data.edge_index[0], 0] - data.x[data.edge_index[1], 0]
+        edge_y = data.x[data.edge_index[0], 1] - data.x[data.edge_index[1], 1]
+        edge_z = data.x[data.edge_index[0], 2] - data.x[data.edge_index[1], 2]
+
+        # Angle between projection on XY and symmetry plane
+        k = torch.tensor(-1.2334245570477371)  # x = k * y, z plane
+        dot = (edge_x * 1.0 + edge_y * k)
+        angle_to_symmetry_xy_plane = torch.arccos(
+            torch.clamp(dot / torch.sqrt(1 + k ** 2) / torch.sqrt(edge_x ** 2 + edge_y ** 2), -1.0, 1.0)
+        )
+        angle_to_symmetry_xy_plane = torch.where(
+            torch.isnan(angle_to_symmetry_xy_plane), 
+            torch.full_like(angle_to_symmetry_xy_plane, torch.pi / 2), 
+            angle_to_symmetry_xy_plane
+        )
+        angle_to_symmetry_xy_plane = angle_to_symmetry_xy_plane / torch.pi
+
+        # Angle to (0, 0, 1) vector: same string + up or down
+        dot = (edge_x * 0.0 + edge_y * 0.0 + edge_z * 1.0)
+        angle_to_z_axis = torch.arccos(
+            torch.clamp(dot / torch.sqrt(edge_x ** 2 + edge_y ** 2 + edge_z ** 2), -1.0, 1.0)
+        )
+        angle_to_z_axis = torch.where(
+            torch.isnan(angle_to_z_axis), 
+            torch.zeros_like(angle_to_z_axis), 
+            angle_to_z_axis
+        )
+        angle_to_z_axis = angle_to_z_axis / torch.pi
+        
+        # Sensor group diff
+        sensor_group_diff = torch.abs(data.x[data.edge_index[0], 6] - data.x[data.edge_index[1], 6])
+
+        # Eucledian distance between sensor positions
+        edge_distance = torch.sqrt(edge_x ** 2 + edge_y ** 2 + edge_z ** 2)
+
+        # Same sensor
+        same_sensor = \
+            torch.isclose(edge_distance, torch.tensor(0.0), atol=1e-5)
+        
+        # Time difference
+        time_diff = data.x[data.edge_index[0], 3] - data.x[data.edge_index[1], 3]
+
+        data.edge_attr = torch.stack(
+            [
+                angle_to_symmetry_xy_plane,
+                angle_to_z_axis,
+                sensor_group_diff,
+                edge_distance,
+                same_sensor.float(),
+                time_diff,
+            ]
+        ).T
 
         return data
+    
+    @property
+    def nb_edge_attrs(self) -> int:
+        """Return number of edge_attrs features.
+
+        This the default, but may be overridden by specific inheriting classes.
+        """
+        return 6
 
 
 class IceCubeDeepCore(IceCube86):

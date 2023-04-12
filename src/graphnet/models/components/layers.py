@@ -45,11 +45,15 @@ class DynEdgeConv(EdgeConv, LightningModule):
         self.features_subset = features_subset
 
     def forward(
-        self, x: Tensor, edge_index: Adj, batch: Optional[Tensor] = None
+        self, 
+        x: Tensor, 
+        edge_index: Adj, 
+        batch: Optional[Tensor] = None, 
+        edge_attr: Optional[Tensor] = None
     ) -> Tensor:
         """Forward pass."""
         # Standard EdgeConv forward pass
-        x = super().forward(x, edge_index)
+        x = super().forward(x, edge_index, edge_attr=edge_attr)
 
         # Recompute adjacency
         edge_index = knn_graph(

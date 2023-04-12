@@ -42,6 +42,7 @@ class DynEdge(GNN):
         self,
         nb_inputs: int,
         *,
+        nb_edge_attrs: int = 0,
         nb_neighbours: int = 8,
         features_subset: Optional[Union[List[int], slice]] = None,
         dynedge_layer_sizes: Optional[List[Tuple[int, ...]]] = None,
@@ -60,6 +61,7 @@ class DynEdge(GNN):
 
         Args:
             nb_inputs: Number of input features on each node.
+            nb_edge_attrs: Number of edge attributes
             nb_neighbours: Number of neighbours to used in the k-nearest
                 neighbour clustering which is performed after each (dynamical)
                 edge convolution.
@@ -222,6 +224,7 @@ class DynEdge(GNN):
 
         # Remaining member variables()
         self._nb_inputs = nb_inputs
+        self._nb_edge_attrs = nb_edge_attrs
         self._nb_global_variables = 5 + nb_inputs
         self._nb_neighbours = nb_neighbours
         self._features_subset = features_subset
@@ -238,7 +241,8 @@ class DynEdge(GNN):
 
         self._conv_layers = torch.nn.ModuleList()
         nb_latent_features = nb_input_features
-        for sizes in self._dynedge_layer_sizes:
+        nb_edge_attrs = self._nb_edge_attrs
+        for conv_ix, sizes in enumerate(self._dynedge_layer_sizes):
             layers = []
             layer_sizes = [nb_latent_features] + list(sizes)
             for ix, (nb_in, nb_out) in enumerate(
@@ -246,6 +250,8 @@ class DynEdge(GNN):
             ):
                 if ix == 0:
                     nb_in *= 2
+                    if conv_ix == 0:
+                        nb_in += nb_edge_attrs
                 linear_block = OrderedDict()
                 linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
                 linear_block['activation'] = self.activation_builder()
@@ -364,7 +370,8 @@ class DynEdge(GNN):
     def forward(self, data: Data) -> Tensor:
         """Apply learnable forward pass."""
         # Convenience variables
-        x, edge_index, batch, n_pulses = data.x, data.edge_index, data.batch, data.n_pulses
+        x, edge_index, batch, n_pulses, edge_attr = \
+            data.x, data.edge_index, data.batch, data.n_pulses, data.edge_attr
 
         global_variables = self._calculate_global_variables(
             x,
@@ -389,11 +396,14 @@ class DynEdge(GNN):
 
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
-        for conv_layer in self._conv_layers:
+        for i, conv_layer in enumerate(self._conv_layers):
             if not self._gps:
-                x, edge_index = conv_layer(x, edge_index, batch)
+                edge_attr_to_pass = None
+                if i == 0:
+                    edge_attr_to_pass = edge_attr
+                x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
             else:
-                pe, edge_attr = data.pe, data.edge_attr
+                pe = data.pe
                 x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
                 edge_attr = self.edge_emb(edge_attr)
                 x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
