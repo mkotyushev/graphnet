@@ -59,6 +59,7 @@ def make_dataloader(
     max_n_pulses: Optional[int] = None,
     max_n_pulses_strategy: Optional[str] = None,
     transforms: Optional[List[Callable]] = None,
+    graph_transform: Optional[Callable] = None,
     **dataset_kwargs,
 ) -> DataLoader:
     """Construct `DataLoader` instance."""
@@ -83,6 +84,7 @@ def make_dataloader(
         max_n_pulses=max_n_pulses,
         max_n_pulses_strategy=max_n_pulses_strategy,
         transforms=transforms,
+        graph_transform=graph_transform
         **dataset_kwargs
     )
 
