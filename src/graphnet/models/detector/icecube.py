@@ -48,6 +48,14 @@ class IceCubeKaggle(Detector):
 
     # Implementing abstract class attribute
     features = FEATURES.KAGGLE
+    xy_anisotropy_k = [
+        -1.2334245570477371,
+        -6.279196009389672,
+        2.6169062228573026,
+        0.8034497666860473,
+        0.17294482605805447,
+        -0.38345223229188563,
+    ]
 
     def _forward(self, data: Data) -> Data:
         """Ingest data, build graph, and preprocess features.
@@ -79,17 +87,20 @@ class IceCubeKaggle(Detector):
         edge_z = data.x[data.edge_index[0], 2] - data.x[data.edge_index[1], 2]
 
         # Angle between projection on XY and symmetry plane
-        k = torch.tensor(-1.2334245570477371)  # x = k * y, z plane
-        dot = (edge_x * 1.0 + edge_y * k)
-        angle_to_symmetry_xy_plane = torch.arccos(
-            torch.clamp(dot / torch.sqrt(1 + k ** 2) / torch.sqrt(edge_x ** 2 + edge_y ** 2), -1.0, 1.0)
-        )
-        angle_to_symmetry_xy_plane = torch.where(
-            torch.isnan(angle_to_symmetry_xy_plane), 
-            torch.full_like(angle_to_symmetry_xy_plane, torch.pi / 2), 
-            angle_to_symmetry_xy_plane
-        )
-        angle_to_symmetry_xy_plane = angle_to_symmetry_xy_plane / torch.pi
+        angles_to_symmetry_xy_plane = []
+        for k in self.xy_anisotropy_k:
+            k = torch.tensor(k)  # x = k * y, z plane
+            dot = (edge_x * 1.0 + edge_y * k)
+            angle_to_symmetry_xy_plane = torch.arccos(
+                torch.clamp(dot / torch.sqrt(1 + k ** 2) / torch.sqrt(edge_x ** 2 + edge_y ** 2), -1.0, 1.0)
+            )
+            angle_to_symmetry_xy_plane = torch.where(
+                torch.isnan(angle_to_symmetry_xy_plane), 
+                torch.full_like(angle_to_symmetry_xy_plane, torch.pi / 2), 
+                angle_to_symmetry_xy_plane
+            )
+            angle_to_symmetry_xy_plane = angle_to_symmetry_xy_plane / torch.pi
+            angles_to_symmetry_xy_plane.append(angle_to_symmetry_xy_plane)
 
         # Angle to (0, 0, 1) vector: same string + up or down
         dot = (edge_x * 0.0 + edge_y * 0.0 + edge_z * 1.0)
@@ -118,7 +129,7 @@ class IceCubeKaggle(Detector):
 
         data.edge_attr = torch.stack(
             [
-                angle_to_symmetry_xy_plane,
+                *angles_to_symmetry_xy_plane,
                 angle_to_z_axis,
                 sensor_group_diff,
                 edge_distance,
@@ -135,7 +146,7 @@ class IceCubeKaggle(Detector):
 
         This the default, but may be overridden by specific inheriting classes.
         """
-        return 6
+        return 11
 
 
 class IceCubeDeepCore(IceCube86):
