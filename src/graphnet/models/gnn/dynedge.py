@@ -253,7 +253,7 @@ class DynEdge(GNN):
                     linear_block['dropout'] = self.dropout_builder(self.dropout)
                 layers.append(torch.nn.Sequential(linear_block))
             nn = torch.nn.Sequential(*layers)
-            if not self.gps:
+            if not self._gps:
                 conv_layer = DynEdgeConv(
                     nn,
                     aggr="add",
