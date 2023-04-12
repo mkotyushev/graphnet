@@ -108,6 +108,7 @@ class StandardModel(Model):
         detector: Detector,
         gnn: GNN,
         tasks: Union[Task, List[Task]],
+        pe: Optional[Callable[[Data], Data]] = None,
         tasks_weiths: Optional[List[float]] = None,
         coarsening: Optional[Coarsening] = None,
         optimizer_class: type = Adam,
@@ -121,7 +122,7 @@ class StandardModel(Model):
         """Construct `StandardModel`."""
         # Base class constructor
         super().__init__()
-        self.save_hyperparameters(ignore=['detector', 'gnn', 'tasks'])
+        self.save_hyperparameters(ignore=['detector', 'pe', 'gnn', 'tasks'])
 
         # Check(s)
         if isinstance(tasks, Task):
@@ -135,6 +136,7 @@ class StandardModel(Model):
         # Member variable(s)
         self._detector = detector
         self._gnn = gnn
+        self._pe = pe
         self._tasks = ModuleList(tasks)
         self._tasks_weights = tasks_weiths
         self._coarsening = coarsening
@@ -174,6 +176,8 @@ class StandardModel(Model):
         if self._coarsening:
             data = self._coarsening(data)
         data = self._detector(data)
+        if self._pe:
+            data = self._pe(data)
         x = self._gnn(data)
         preds = [task(x) for task in self._tasks]
         return preds
