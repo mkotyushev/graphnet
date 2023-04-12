@@ -77,7 +77,8 @@ class IceCubeKaggle(Detector):
         data.x[:, 3] = (data.x[:, 3] - 1.0e04) / 3.0e4  # time
         data.x[:, 4] = torch.log10(data.x[:, 4]) / 3.0  # charge
         # data.x[:, 5] is bool auxilaty, no need to normalize
-        data.x[:, 6] /= 2.0 # sensor group
+        data.x[:, 6] /= 2.0  # sensor group
+        data.x[:, 7] /= 1.35  # sensor relative qe
 
         # Edge attributes
 
@@ -127,6 +128,11 @@ class IceCubeKaggle(Detector):
         # Time difference
         time_diff = data.x[data.edge_index[0], 3] - data.x[data.edge_index[1], 3]
 
+        # Activation speed, to m / ns then normed by speed of light
+        # https://www.kaggle.com/competitions/icecube-neutrinos-in-deep-ice/
+        # discussion/382131
+        activation_speed = edge_distance * 500.0 / torch.abs(time_diff * 3.0e4) / 0.3
+
         data.edge_attr = torch.stack(
             [
                 *angles_to_symmetry_xy_plane,
@@ -135,6 +141,7 @@ class IceCubeKaggle(Detector):
                 edge_distance,
                 same_sensor.float(),
                 time_diff,
+                activation_speed,
             ]
         ).T
 
@@ -146,7 +153,7 @@ class IceCubeKaggle(Detector):
 
         This the default, but may be overridden by specific inheriting classes.
         """
-        return 11
+        return 12
 
 
 class IceCubeDeepCore(IceCube86):

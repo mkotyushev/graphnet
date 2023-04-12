@@ -29,7 +29,7 @@ class FEATURES:
         "sensor_pos_z",
         "t",
     ]
-    KAGGLE = ["x", "y", "z", "time", "charge", "auxiliary", "sensor_type"]
+    KAGGLE = ["x", "y", "z", "time", "charge", "auxiliary", "sensor_type", "relative_qe"]
 
 
 class TRUTH:

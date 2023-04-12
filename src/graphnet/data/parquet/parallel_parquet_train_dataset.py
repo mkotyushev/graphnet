@@ -69,6 +69,25 @@ def build_geometry_table(geometry_path):
         pl.col('sensor_type').cast(pl.Int16).alias('sensor_type'), 
     ])
 
+    # Get QE
+    # https://www.kaggle.com/code/antonsevostianov/
+    # icecube-sensor-efficiency-feature-engineering/notebook
+    geometry = geometry.with_columns([
+        pl.lit(1.05).alias('relative_qe'),
+    ])
+    geometry = geometry.with_columns([
+        pl.when(deep_core).then(1.35).otherwise(pl.col('relative_qe')).alias('relative_qe'),
+    ])
+    is_dustlayer = ((pl.col('z') <= 0.0) & (pl.col('z') >= -155.0))
+    geometry = geometry.with_columns([
+        pl.when(is_dustlayer).then(0.6).otherwise(pl.col('relative_qe')).alias('relative_qe'),
+    ])
+    geometry = geometry.with_columns([
+        pl.when(
+            pl.col('z') > 0.0 & (~deep_core) & (~is_dustlayer)
+        ).then(0.95).otherwise(pl.col('relative_qe')).alias('relative_qe'),
+    ])
+
     return geometry
 
 
