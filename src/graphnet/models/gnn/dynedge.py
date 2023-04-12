@@ -1,6 +1,6 @@
 """Implementation of the DynEdge GNN model architecture."""
 from collections import OrderedDict
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Callable, List, Optional, Sequence, Tuple, Type, Union
 
 import torch
 from torch import Tensor, LongTensor
@@ -34,6 +34,52 @@ class Float32BatchNorm1d(torch.nn.BatchNorm1d):
             return super().forward(input)
 
 
+class LinearBlock(torch.nn.Module):
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        bias: bool = True,
+        linear_builder: Optional[Union[Type, Callable]] = None,
+        activation_builder: Optional[Union[Type, Callable]] = None,
+        dropout: Optional[float] = None,
+        bn_builder: Optional[Union[Type, Callable]] = None,
+    ):
+        """Construct `LinearBlock`."""
+        super().__init__()
+
+        self.in_features = in_features
+        self.out_features = out_features
+
+        if linear_builder is None:
+            linear_builder = torch.nn.Linear
+
+        self.linear = linear_builder(in_features, out_features, bias=bias)
+        
+        self.activation = None
+        if activation_builder is not None:
+            self.activation = activation_builder()
+
+        self.dropout = None
+        if dropout is not None:
+            self.dropout = torch.nn.Dropout(dropout)
+
+        self.bn = None
+        if bn_builder is not None:
+            self.bn = bn_builder(out_features)
+        
+
+    def forward(self, x):
+        x = self.linear(x)
+        if self.activation is not None:
+            x = self.activation(x)
+        if self.dropout is not None:
+            x = self.dropout(x)
+        if self.bn is not None:
+            x = self.bn(x)
+        return x
+
+
 class DynEdge(GNN):
     """DynEdge (dynamical edge convolutional) model."""
 
@@ -56,6 +102,7 @@ class DynEdge(GNN):
         dropout: Optional[float] = None,
         repeat_input: int = 1,
         gps: bool = False,
+        gps_heads: int = 1,
     ):
         """Construct `DynEdge`.
 
@@ -100,6 +147,7 @@ class DynEdge(GNN):
             gps: if `True`, then the model uses the GPS conv
                 with DyneEdgeConv as local model, otherwise it uses the
                 DyneEdgeConv conv.
+            gps_heads: number of heads in the GPS conv.
         """
         self.dropout_builder, self.dropout, self.bn_builder = None, None, None
         if fix_points is not None:
@@ -180,19 +228,26 @@ class DynEdge(GNN):
         self._readout_layer_sizes = readout_layer_sizes
 
         self._gps = gps
+        self._gps_heads = gps_heads
         # Check that all the hidden dimentions are the same
         if gps:
-            hidden_size = dynedge_layer_sizes[0][0]
+            self._gps_hidden_size = dynedge_layer_sizes[0][0]
             assert all(
-                sizes[0] == hidden_size and sizes[1] == hidden_size
+                sizes[0] == self._gps_hidden_size and sizes[1] == self._gps_hidden_size
                 for sizes in dynedge_layer_sizes
-            ), f'If using GPS, all hidden dimensions must be the same. Got {dynedge_layer_sizes}'
+            ), \
+                f'If using GPS, all conv hidden dimensions must be the same. ' \
+                f'Got {dynedge_layer_sizes}'
             assert all(
-                sizes[0] == hidden_size for sizes in post_processing_layer_sizes
-            ), f'If using GPS, all hidden dimensions must be the same. Got {post_processing_layer_sizes}'
+                size == self._gps_hidden_size for size in post_processing_layer_sizes
+            ), \
+                f'If using GPS, all post-processing hidden dimensions must be the same. ' \
+                f'Got {post_processing_layer_sizes}'
             assert all(
-                sizes[0] == hidden_size for sizes in readout_layer_sizes
-            ), f'If using GPS, all hidden dimensions must be the same. Got {readout_layer_sizes}'
+                size == self._gps_hidden_size for size in readout_layer_sizes
+            ), \
+                f'If using GPS, all readout hidden dimensions must be the same. ' \
+                f'Got {readout_layer_sizes}'
 
         # Global pooling scheme(s)
         if isinstance(global_pooling_schemes, str):
@@ -234,30 +289,46 @@ class DynEdge(GNN):
 
     def _construct_layers(self) -> None:
         """Construct layers (torch.nn.Modules)."""
-        # Convolutional operations
         nb_input_features = self._nb_inputs
         if not self._add_global_variables_after_pooling:
             nb_input_features += self._nb_global_variables
 
+        # Input processing for GPS
+        self.node_emb, self.edge_emb, self.pe_lin = None, None, None
+        if self._gps:
+            self.node_emb = torch.nn.Linear(nb_input_features, self._gps_hidden_size)
+            self.pe_lin = torch.nn.Linear(20, self._gps_hidden_size)
+            self.edge_emb = torch.nn.Linear(self._nb_edge_attrs, self._gps_hidden_size)
+
+        # Convolutional operations
         self._conv_layers = torch.nn.ModuleList()
         nb_latent_features = nb_input_features
         nb_edge_attrs = self._nb_edge_attrs
         for conv_ix, sizes in enumerate(self._dynedge_layer_sizes):
             layers = []
-            layer_sizes = [nb_latent_features] + list(sizes)
+            layer_sizes = []
+            if self._gps:
+                layer_sizes.append(self._gps_hidden_size)
+            else:
+                layer_sizes.append(nb_latent_features)
+            layer_sizes = layer_sizes + list(sizes)
             for ix, (nb_in, nb_out) in enumerate(
                 zip(layer_sizes[:-1], layer_sizes[1:])
             ):
-                if ix == 0:
+                if ix == 0 and not self._gps:
                     nb_in *= 2
                     if conv_ix == 0:
                         nb_in += nb_edge_attrs
-                linear_block = OrderedDict()
-                linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
-                linear_block['activation'] = self.activation_builder()
-                if self.dropout_builder is not None:
-                    linear_block['dropout'] = self.dropout_builder(self.dropout)
-                layers.append(torch.nn.Sequential(linear_block))
+                linear_block = LinearBlock(
+                    nb_in,
+                    nb_out,
+                    bias=self._bias,
+                    linear_builder=self.linear_builder,
+                    bn_builder=None,  # no batch norm for local conv
+                    activation_builder=self.activation_builder,
+                    dropout=self.dropout,
+                )
+                layers.append(linear_block)
             nn = torch.nn.Sequential(*layers)
             if not self._gps:
                 conv_layer = DynEdgeConv(
@@ -268,19 +339,22 @@ class DynEdge(GNN):
                 )
             else:
                 conv_layer = GPSConv(
-                    GINEConv(nn),
-                    self._nb_global_variables,
-                    self._nb_neighbours,
-                    self._global_pooling_schemes,
+                    self._gps_hidden_size,
+                    GINEConv(nn, edge_dim=self._gps_hidden_size),
+                    heads=self._gps_heads,
                 )
             self._conv_layers.append(conv_layer)
 
             nb_latent_features = nb_out
 
         # Post-processing operations
+        if self._gps:
+            post_processing_input_cat_size = self._gps_hidden_size
+        else:
+            post_processing_input_cat_size = nb_input_features
         nb_latent_features = (
             sum(sizes[-1] for sizes in self._dynedge_layer_sizes)
-            + nb_input_features * self.repeat_input
+            + post_processing_input_cat_size * self.repeat_input
         )
 
         post_processing_layers = []
@@ -288,14 +362,16 @@ class DynEdge(GNN):
             self._post_processing_layer_sizes
         )
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            linear_block = OrderedDict()
-            linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
-            linear_block['activation'] = self.activation_builder()
-            if self.dropout_builder is not None:
-                linear_block['dropout'] = self.dropout_builder(self.dropout)
-            if self.bn_builder is not None:
-                linear_block['bn'] = self.bn_builder(nb_out)
-            post_processing_layers.append(torch.nn.Sequential(linear_block))
+            linear_block = LinearBlock(
+                nb_in,
+                nb_out,
+                bias=self._bias,
+                linear_builder=self.linear_builder,
+                bn_builder=self.bn_builder,
+                activation_builder=self.activation_builder,
+                dropout=self.dropout,
+            )
+            post_processing_layers.append(linear_block)
 
         self._post_processing = torch.nn.Sequential(*post_processing_layers)
 
@@ -312,14 +388,16 @@ class DynEdge(GNN):
         readout_layers = []
         layer_sizes = [nb_latent_features] + list(self._readout_layer_sizes)
         for nb_in, nb_out in zip(layer_sizes[:-1], layer_sizes[1:]):
-            linear_block = OrderedDict()
-            linear_block['linear'] = self.linear_builder(nb_in, nb_out, bias=self._bias)
-            linear_block['activation'] = self.activation_builder()
-            if self.dropout_builder is not None:
-                linear_block['dropout'] = self.dropout_builder(self.dropout)
-            if self.bn_builder is not None:
-                linear_block['bn'] = self.bn_builder(nb_out)
-            readout_layers.append(torch.nn.Sequential(linear_block))
+            linear_block = LinearBlock(
+                nb_in,
+                nb_out,
+                bias=self._bias,
+                linear_builder=self.linear_builder,
+                bn_builder=self.bn_builder,
+                activation_builder=self.activation_builder,
+                dropout=self.dropout,
+            )
+            readout_layers.append(linear_block)
 
         self._readout = torch.nn.Sequential(*readout_layers)
 
@@ -393,6 +471,11 @@ class DynEdge(GNN):
             )
 
             x = torch.cat((x, global_variables_distributed), dim=1)
+        
+        if self._gps:
+            pe = data.pe
+            x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
+            edge_attr = self.edge_emb(edge_attr)
 
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
@@ -403,9 +486,6 @@ class DynEdge(GNN):
                     edge_attr_to_pass = edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
             else:
-                pe = data.pe
-                x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
-                edge_attr = self.edge_emb(edge_attr)
                 x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
             skip_connections.append(x)
 
