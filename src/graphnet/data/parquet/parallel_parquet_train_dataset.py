@@ -84,7 +84,7 @@ def build_geometry_table(geometry_path):
     ])
     geometry = geometry.with_columns([
         pl.when(
-            pl.col('z') > 0.0 & (~deep_core) & (~is_dustlayer)
+            (pl.col('z') > 0.0) & (~deep_core) & (~is_dustlayer)
         ).then(0.95).otherwise(pl.col('relative_qe')).alias('relative_qe'),
     ])
 
@@ -193,6 +193,7 @@ class ParallelParquetTrainDataset(Dataset):
                 pl.col("charge").list(),
                 pl.col("auxiliary").list(),
                 pl.col("sensor_type").list(),
+                pl.col("relative_qe").list(),
             ]
         ).sort('event_id')
         return df
