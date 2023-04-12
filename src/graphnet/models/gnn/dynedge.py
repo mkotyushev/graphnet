@@ -6,6 +6,7 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
+from torch_geometric.nn.conv import GPSConv, GINEConv
 
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.utilities.config import save_model_config
@@ -52,7 +53,8 @@ class DynEdge(GNN):
         bias: bool = True,
         bn: bool = False,
         dropout: Optional[float] = None,
-        repeat_input: int = 1
+        repeat_input: int = 1,
+        gps: bool = False,
     ):
         """Construct `DynEdge`.
 
@@ -87,6 +89,15 @@ class DynEdge(GNN):
                 them to the individual nodes before any convolutional
                 operations.
             bias: if `True`, then the layers use bias weights else they don't.
+            bn: if `True`, then the layers use batch normalization else they
+                don't.
+            dropout: if not `None`, then the layers use dropout with the
+                specified probability.
+            repeat_input: Number of times to repeat the input features in 
+                preprocess layer input.
+            gps: if `True`, then the model uses the GPS conv
+                with DyneEdgeConv as local model, otherwise it uses the
+                DyneEdgeConv conv.
         """
         self.dropout_builder, self.dropout, self.bn_builder = None, None, None
         if fix_points is not None:
@@ -166,6 +177,21 @@ class DynEdge(GNN):
 
         self._readout_layer_sizes = readout_layer_sizes
 
+        self._gps = gps
+        # Check that all the hidden dimentions are the same
+        if gps:
+            hidden_size = dynedge_layer_sizes[0][0]
+            assert all(
+                sizes[0] == hidden_size and sizes[1] == hidden_size
+                for sizes in dynedge_layer_sizes
+            ), f'If using GPS, all hidden dimensions must be the same. Got {dynedge_layer_sizes}'
+            assert all(
+                sizes[0] == hidden_size for sizes in post_processing_layer_sizes
+            ), f'If using GPS, all hidden dimensions must be the same. Got {post_processing_layer_sizes}'
+            assert all(
+                sizes[0] == hidden_size for sizes in readout_layer_sizes
+            ), f'If using GPS, all hidden dimensions must be the same. Got {readout_layer_sizes}'
+
         # Global pooling scheme(s)
         if isinstance(global_pooling_schemes, str):
             global_pooling_schemes = [global_pooling_schemes]
@@ -226,13 +252,21 @@ class DynEdge(GNN):
                 if self.dropout_builder is not None:
                     linear_block['dropout'] = self.dropout_builder(self.dropout)
                 layers.append(torch.nn.Sequential(linear_block))
-
-            conv_layer = DynEdgeConv(
-                torch.nn.Sequential(*layers),
-                aggr="add",
-                nb_neighbors=self._nb_neighbours,
-                features_subset=self._features_subset,
-            )
+            nn = torch.nn.Sequential(*layers)
+            if not self.gps:
+                conv_layer = DynEdgeConv(
+                    nn,
+                    aggr="add",
+                    nb_neighbors=self._nb_neighbours,
+                    features_subset=self._features_subset,
+                )
+            else:
+                conv_layer = GPSConv(
+                    GINEConv(nn),
+                    self._nb_global_variables,
+                    self._nb_neighbours,
+                    self._global_pooling_schemes,
+                )
             self._conv_layers.append(conv_layer)
 
             nb_latent_features = nb_out
@@ -356,7 +390,13 @@ class DynEdge(GNN):
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
         for conv_layer in self._conv_layers:
-            x, edge_index = conv_layer(x, edge_index, batch)
+            if not self._gps:
+                x, edge_index = conv_layer(x, edge_index, batch)
+            else:
+                pe, edge_attr = data.pe, data.edge_attr
+                x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
+                edge_attr = self.edge_emb(edge_attr)
+                x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
             skip_connections.append(x)
 
         # Skip-cat
