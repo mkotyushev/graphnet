@@ -84,7 +84,7 @@ def make_dataloader(
         max_n_pulses=max_n_pulses,
         max_n_pulses_strategy=max_n_pulses_strategy,
         transforms=transforms,
-        graph_transform=graph_transform
+        graph_transform=graph_transform,
         **dataset_kwargs
     )
 
