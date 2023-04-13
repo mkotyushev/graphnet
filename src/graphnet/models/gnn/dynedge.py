@@ -6,11 +6,12 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
-from torch_geometric.nn.conv import GPSConv, GINEConv, ResGatedGraphConv
+from torch_geometric.nn.conv import GPSConv
 
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
+from graphnet.models.gnn.res_gated_graph_conv_edge import ResGatedGraphConvEdge
 from graphnet.models.utils import calculate_xyzt_homophily
 from simplex.models.simplex_models import Linear as SimplexLinear, BatchNorm1d as SimplexBatchNorm1d
 
@@ -339,10 +340,13 @@ class DynEdge(GNN):
                 nb_latent_features = nb_out
             else:
                 conv_layer = GPSConv(
-                    self._gps_hidden_size,
-                    ResGatedGraphConv(
+                    channels=self._gps_hidden_size,
+                    conv=ResGatedGraphConvEdge(
                         in_channels=self._gps_hidden_size, 
                         out_channels=self._gps_hidden_size,
+                        bias=self._bias,
+                        edge_dim=self._gps_hidden_size,
+                        act=self.activation_builder(),
                     ),
                     heads=self._gps_heads,
                 )
@@ -488,7 +492,7 @@ class DynEdge(GNN):
                     edge_attr_to_pass = edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
             else:
-                x = conv_layer(x, edge_index, batch)
+                x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
             skip_connections.append(x)
 
         # Skip-cat
