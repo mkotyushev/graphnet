@@ -6,12 +6,10 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
-from torch_geometric.nn.conv import GINEConv
+from torch_geometric.nn.conv import GINEConv, GPSConv
 
 from graphnet.models.components.layers import DynEdgeConv
-from graphnet.models.detector.detector import Detector
 from graphnet.models.gnn.dyn_gps_conv import DynGPSConv
-from graphnet.models.gnn.gps_conv_edge import GPSConvEdge
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.gnn.res_gated_graph_conv_edge import ResGatedGraphConvEdge
@@ -284,13 +282,17 @@ class DynEdge(GNN):
         nb_latent_features = nb_input_features
         nb_edge_attrs = self._nb_edge_attrs
         for conv_ix, sizes in enumerate(self._conv_layer_sizes):
-            # Dynedge with MLP as MPNN or GPS / dynamic GPS with GINEConv(MLP) as MPNN
+            # Dynedge with MLP as MPNN or GPS with GINEConv(MLP) as MPNN
             if self._conv_params['mpnn'] == 'dynedge' or self._conv_params['mpnn'] == 'gine':
                 if self._conv_params['mpnn'] == 'dynedge':
-                    assert self._conv == 'dynedge'
+                    assert self._conv == 'dynedge', \
+                        f"DynEdge MPNN can only be used with dynedge convolutions. Got {self._conv}"
+                elif self._conv_params['mpnn'] == 'gine':
+                    assert self._conv == 'gps', \
+                        f"Gine MPNN can only be used with gps convolutions. Got {self._conv}"
                 layers = []
                 layer_sizes = []
-                if self._conv == 'gps' or self._conv == 'dyngps':
+                if self._conv == 'gps':
                     layer_sizes.append(self._conv_params['hidden_size'])
                 else:
                     layer_sizes.append(nb_latent_features)
@@ -339,7 +341,7 @@ class DynEdge(GNN):
                 )
                 nb_latent_features = nb_out
             elif self._conv == 'gps':
-                conv_layer = GPSConvEdge(
+                conv_layer = GPSConv(
                     channels=self._conv_params['hidden_size'],
                     conv=mpnn,
                     heads=self._conv_params['heads'],
@@ -484,25 +486,19 @@ class DynEdge(GNN):
             pe = data.pe
             x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
             edge_attr = self.edge_emb(edge_attr)
-            # .clone() so that any in-place operations do not affect the original
-            x_original = x.clone()
         
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
         for i, conv_layer in enumerate(self._conv_layers):
-            if self._conv == 'dynedge':
-                edge_attr_to_pass = None
-                if i == 0:
-                    edge_attr_to_pass = edge_attr
+            edge_attr_to_pass = None
+            if self._conv_params['mpnn'] == 'gine' or i == 0:
+                edge_attr_to_pass = edge_attr
+            
+            if self._conv == 'dynedge' or self._conv == 'dyngps':
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
-            elif self._conv == 'gps':
-                # edge_attr are updated here
-                x, edge_attr = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
-            elif self._conv == 'dyngps':
-                # As edge_index is updated, we need to rebuild edge_attr
-                x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
-                edge_attr = self._conv_params['detector'].rebuild_edge_attr(x_original, edge_index)
-                edge_attr = self.edge_emb(edge_attr)
+            else:
+                x = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
+            
             skip_connections.append(x)
 
         # Skip-cat

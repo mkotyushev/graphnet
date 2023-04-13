@@ -1,15 +1,33 @@
 """Class(es) implementing layers to be used in `graphnet` models."""
 
-from typing import Any, Callable, Optional, Sequence, Union
+import torch
 
+from typing import Any, Callable, Optional, Sequence, Union
 from torch.functional import Tensor
 from torch_geometric.nn import EdgeConv
 from torch_geometric.nn.pool import knn_graph
-from torch_geometric.typing import Adj
+from torch_geometric.typing import Adj, PairTensor
 from pytorch_lightning import LightningModule
 
 
-class DynEdgeConv(EdgeConv, LightningModule):
+
+class EdgeConvEdge(EdgeConv):
+    r"""EdgeConv with edge attributes.
+    """
+    def forward(self, x: Union[Tensor, PairTensor], edge_index: Adj, edge_attr: Optional[Tensor] = None) -> Tensor:
+        if isinstance(x, Tensor):
+            x: PairTensor = (x, x)
+        # propagate_type: (x: PairTensor)
+        return self.propagate(edge_index, x=x, size=None, edge_attr=edge_attr)
+
+    def message(self, x_i: Tensor, x_j: Tensor, edge_attr=None) -> Tensor:
+        if edge_attr is not None:
+            return self.nn(torch.cat([x_i, x_j - x_i, edge_attr], dim=-1))
+        else:
+            return self.nn(torch.cat([x_i, x_j - x_i], dim=-1))
+
+
+class DynEdgeConv(EdgeConvEdge, LightningModule):
     """Dynamical edge convolution layer."""
 
     def __init__(

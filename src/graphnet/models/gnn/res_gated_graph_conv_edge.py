@@ -53,9 +53,7 @@ class ResGatedGraphConvEdge(ResGatedGraphConv):
         k = self.lin_key(x[1])
         q = self.lin_query(x[0])
         v = self.lin_value(x[0])
-        if self.lin_edge is not None:
-            assert edge_attr is not None, \
-                "edge_attr must be provided if edge_dim is not None"
+        if self.lin_edge is not None and edge_attr is not None:
             edge_attr = self.lin_edge(edge_attr)
 
         # propagate_type: (k: Tensor, q: Tensor, v: Tensor)
@@ -67,10 +65,7 @@ class ResGatedGraphConvEdge(ResGatedGraphConv):
         if self.bias is not None:
             out = out + self.bias
 
-        if self.return_edge_attrs:
-            return out, edge_attr
-        else:
-            return out
+        return out
 
     def message(self, k_i: Tensor, q_j: Tensor, v_j: Tensor, e_ij: Optional[Tensor] = None) -> Tensor:
         if e_ij is not None:
