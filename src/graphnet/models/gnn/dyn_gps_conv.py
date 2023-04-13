@@ -7,8 +7,6 @@ from torch_geometric.nn.conv import GPSConv
 from torch_geometric.nn.pool import knn_graph
 from torch_geometric.typing import Adj
 
-from graphnet.models.detector.detector import Detector
-
 
 class DynGPSConv(GPSConv):
     r"""GPS with dynamic graph rebuilding.

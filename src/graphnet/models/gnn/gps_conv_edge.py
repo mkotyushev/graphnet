@@ -1,23 +1,14 @@
-import inspect
-from typing import Any, Dict, Optional
+from typing import Optional
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch.nn import Dropout, Linear, Sequential
-
-from torch_geometric.nn.conv import MessagePassing
-from torch_geometric.nn.resolver import (
-    activation_resolver,
-    normalization_resolver,
-)
 from torch_geometric.typing import Adj
 from torch_geometric.utils import to_dense_batch
+from torch_geometric.nn.conv import GPSConv
 
-from ..inits import reset
 
-
-class GPSConvEdge(torch.nn.Module):
+class GPSConvEdge(GPSConv):
     r"""GPSConv with explicit edge_attr handling.
     """
     def forward(
@@ -64,7 +55,3 @@ class GPSConvEdge(torch.nn.Module):
                 h = self.norm3(h)
 
         return out, edge_attr
-
-    def __repr__(self) -> str:
-        return (f'{self.__class__.__name__}({self.channels}, '
-                f'conv={self.conv}, heads={self.heads})')

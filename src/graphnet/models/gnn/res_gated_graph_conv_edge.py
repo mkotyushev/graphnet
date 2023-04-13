@@ -20,6 +20,7 @@ class ResGatedGraphConvEdge(ResGatedGraphConv):
         root_weight: bool = True,
         bias: bool = True,
         edge_dim: Optional[int] = None,
+        return_edge_attrs: bool = False,
         **kwargs,
     ):
         super().__init__(in_channels, out_channels, act, root_weight, bias, **kwargs)
@@ -28,6 +29,8 @@ class ResGatedGraphConvEdge(ResGatedGraphConv):
             self.lin_edge = Linear(edge_dim, out_channels)
         else:
             self.lin_edge = None
+
+        self.return_edge_attrs = return_edge_attrs
         
         self.reset_parameters()
 
@@ -64,7 +67,10 @@ class ResGatedGraphConvEdge(ResGatedGraphConv):
         if self.bias is not None:
             out = out + self.bias
 
-        return out, edge_attr
+        if self.return_edge_attrs:
+            return out, edge_attr
+        else:
+            return out
 
     def message(self, k_i: Tensor, q_j: Tensor, v_j: Tensor, e_ij: Optional[Tensor] = None) -> Tensor:
         if e_ij is not None:

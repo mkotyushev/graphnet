@@ -11,7 +11,7 @@ from torch_geometric.nn.conv import GINEConv
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.detector import Detector
 from graphnet.models.gnn.dyn_gps_conv import DynGPSConv
-from graphnet.models.gnn.edge_gps_conv import GPSConvEdge
+from graphnet.models.gnn.gps_conv_edge import GPSConvEdge
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.gnn.res_gated_graph_conv_edge import ResGatedGraphConvEdge
@@ -327,6 +327,7 @@ class DynEdge(GNN):
                     bias=self._bias,
                     edge_dim=self._conv_params['hidden_size'],
                     act=self.activation_builder(),
+                    return_edge_attrs=(self._conv != 'dyngps')
                 )
 
             if self._conv == 'dynedge':
