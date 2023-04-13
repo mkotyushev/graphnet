@@ -6,7 +6,7 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
-from torch_geometric.nn.conv import GPSConv
+from torch_geometric.nn.conv import GPSConv, GINEConv
 
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.detector import Detector
@@ -283,10 +283,13 @@ class DynEdge(GNN):
         nb_latent_features = nb_input_features
         nb_edge_attrs = self._nb_edge_attrs
         for conv_ix, sizes in enumerate(self._conv_layer_sizes):
-            if self._conv == 'dynedge':
+            # Dynedge with MLP as MPNN or GPS / dynamic GPS with GINEConv(MLP) as MPNN
+            if self._conv_params['mpnn'] == 'dynedge' or self._conv_params['mpnn'] == 'gine':
+                if self._conv_params['mpnn'] == 'dynedge':
+                    assert self._conv == 'dynedge'
                 layers = []
                 layer_sizes = []
-                if self._gps:
+                if self._conv == 'gps' or self._conv == 'dyngps':
                     layer_sizes.append(self._conv_params['hidden_size'])
                 else:
                     layer_sizes.append(nb_latent_features)
@@ -294,7 +297,7 @@ class DynEdge(GNN):
                 for ix, (nb_in, nb_out) in enumerate(
                     zip(layer_sizes[:-1], layer_sizes[1:])
                 ):
-                    if ix == 0 and not self._gps:
+                    if ix == 0 and self._conv == 'dynedge':
                         nb_in *= 2
                         if conv_ix == 0:
                             nb_in += nb_edge_attrs
@@ -308,8 +311,26 @@ class DynEdge(GNN):
                         dropout=self.dropout,
                     )
                     layers.append(linear_block)
+                if self._conv == 'dynedge':
+                    mpnn = torch.nn.Sequential(*layers)
+                else:
+                    mpnn = GINEConv(
+                        nn=torch.nn.Sequential(*layers),
+                        edge_dim=self._conv_params['hidden_size'],
+                    )
+            # GPS / dynamic GPS with GatedGCN as MPNN
+            elif self._conv_params['mpnn'] == 'gatedgcn':
+                mpnn = ResGatedGraphConvEdge(
+                    in_channels=self._conv_params['hidden_size'], 
+                    out_channels=self._conv_params['hidden_size'],
+                    bias=self._bias,
+                    edge_dim=self._conv_params['hidden_size'],
+                    act=self.activation_builder(),
+                )
+
+            if self._conv == 'dynedge':
                 conv_layer = DynEdgeConv(
-                    torch.nn.Sequential(*layers),
+                    mpnn,
                     aggr="add",
                     nb_neighbors=self._nb_neighbours,
                     features_subset=self._features_subset,
@@ -318,30 +339,19 @@ class DynEdge(GNN):
             elif self._conv == 'gps':
                 conv_layer = GPSConv(
                     channels=self._conv_params['hidden_size'],
-                    conv=ResGatedGraphConvEdge(
-                        in_channels=self._conv_params['hidden_size'], 
-                        out_channels=self._conv_params['hidden_size'],
-                        bias=self._bias,
-                        edge_dim=self._conv_params['hidden_size'],
-                        act=self.activation_builder(),
-                    ),
+                    conv=mpnn,
                     heads=self._conv_params['heads'],
                 )
+                nb_latent_features = self._conv_params['hidden_size']
             elif self._conv == 'dyngps':
                 conv_layer = DynGPSConv(
                     channels=self._conv_params['hidden_size'],
-                    conv=ResGatedGraphConvEdge(
-                        in_channels=self._conv_params['hidden_size'], 
-                        out_channels=self._conv_params['hidden_size'],
-                        bias=self._bias,
-                        edge_dim=self._conv_params['hidden_size'],
-                        act=self.activation_builder(),
-                    ),
+                    conv=mpnn,
                     heads=self._conv_params['heads'],
                     nb_neighbors=self._nb_neighbours,
                 )
+                nb_latent_features = self._conv_params['hidden_size']
             self._conv_layers.append(conv_layer)
-            nb_latent_features = self._conv_params['hidden_size']
 
         # Post-processing operations
         if self._conv == 'gps' or self._conv == 'dyngps':
