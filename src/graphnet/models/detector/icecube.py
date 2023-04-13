@@ -81,11 +81,15 @@ class IceCubeKaggle(Detector):
         data.x[:, 7] /= 1.35  # sensor relative qe
 
         # Edge attributes
+        data.edge_attr = self.rebuild_edge_attr(data.x, data.edge_index)
 
+        return data
+    
+    def rebuild_edge_attr(self, x, edge_index):
         # Get edge XYZ vector
-        edge_x = data.x[data.edge_index[0], 0] - data.x[data.edge_index[1], 0]
-        edge_y = data.x[data.edge_index[0], 1] - data.x[data.edge_index[1], 1]
-        edge_z = data.x[data.edge_index[0], 2] - data.x[data.edge_index[1], 2]
+        edge_x = x[edge_index[0], 0] - x[edge_index[1], 0]
+        edge_y = x[edge_index[0], 1] - x[edge_index[1], 1]
+        edge_z = x[edge_index[0], 2] - x[edge_index[1], 2]
 
         # Angle between projection on XY and symmetry plane
         angles_to_symmetry_xy_plane = []
@@ -116,7 +120,7 @@ class IceCubeKaggle(Detector):
         angle_to_z_axis = angle_to_z_axis / torch.pi
         
         # Sensor group diff
-        sensor_group_diff = torch.abs(data.x[data.edge_index[0], 6] - data.x[data.edge_index[1], 6])
+        sensor_group_diff = torch.abs(x[edge_index[0], 6] - x[edge_index[1], 6])
 
         # Eucledian distance between sensor positions
         edge_distance = torch.sqrt(edge_x ** 2 + edge_y ** 2 + edge_z ** 2)
@@ -126,7 +130,7 @@ class IceCubeKaggle(Detector):
             torch.isclose(edge_distance, torch.tensor(0.0), atol=1e-5)
         
         # Time difference
-        time_diff = data.x[data.edge_index[0], 3] - data.x[data.edge_index[1], 3]
+        time_diff = x[edge_index[0], 3] - x[edge_index[1], 3]
 
         # Activation speed, to m / ns then normed by speed of light
         # https://www.kaggle.com/competitions/icecube-neutrinos-in-deep-ice/
@@ -138,7 +142,7 @@ class IceCubeKaggle(Detector):
             activation_speed
         )
 
-        data.edge_attr = torch.stack(
+        edge_attr = torch.stack(
             [
                 *angles_to_symmetry_xy_plane,
                 angle_to_z_axis,
@@ -150,7 +154,7 @@ class IceCubeKaggle(Detector):
             ]
         ).T
 
-        return data
+        return edge_attr
     
     @property
     def nb_edge_attrs(self) -> int:
