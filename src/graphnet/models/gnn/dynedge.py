@@ -1,6 +1,6 @@
 """Implementation of the DynEdge GNN model architecture."""
 from collections import OrderedDict
-from typing import Callable, List, Optional, Sequence, Tuple, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple, Type, Union
 
 import torch
 from torch import Tensor, LongTensor
@@ -9,6 +9,8 @@ from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
 from torch_geometric.nn.conv import GPSConv
 
 from graphnet.models.components.layers import DynEdgeConv
+from graphnet.models.detector.detector import Detector
+from graphnet.models.gnn.dyn_gps_conv import DynGPSConv
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.gnn.res_gated_graph_conv_edge import ResGatedGraphConvEdge
@@ -92,7 +94,6 @@ class DynEdge(GNN):
         nb_edge_attrs: int = 0,
         nb_neighbours: int = 8,
         features_subset: Optional[Union[List[int], slice]] = None,
-        dynedge_layer_sizes: Optional[List[Tuple[int, ...]]] = None,
         post_processing_layer_sizes: Optional[List[int]] = None,
         readout_layer_sizes: Optional[List[int]] = None,
         global_pooling_schemes: Optional[Union[str, List[str]]] = None,
@@ -102,8 +103,8 @@ class DynEdge(GNN):
         bn: bool = False,
         dropout: Optional[float] = None,
         repeat_input: int = 1,
-        gps: bool = False,
-        gps_heads: int = 1,
+        conv: str = 'dynedge',
+        conv_params: Optional[Dict[str, Any]] = None,
     ):
         """Construct `DynEdge`.
 
@@ -116,15 +117,6 @@ class DynEdge(GNN):
             features_subset: The subset of latent features on each node that
                 are used as metric dimensions when performing the k-nearest
                 neighbours clustering. Defaults to [0,1,2].
-            dynedge_layer_sizes: The layer sizes, or latent feature dimenions,
-                used in the `DynEdgeConv` layer. Each entry in
-                `dynedge_layer_sizes` corresponds to a single `DynEdgeConv`
-                layer; the integers in the corresponding tuple corresponds to
-                the layer sizes in the multi-layer perceptron (MLP) that is
-                applied within each `DynEdgeConv` layer. That is, a list of
-                size-two tuples means that all `DynEdgeConv` layers contain a
-                two-layer MLP.
-                Defaults to [(128, 256), (336, 256), (336, 256), (336, 256)].
             post_processing_layer_sizes: Hidden layer sizes in the MLP
                 following the skip-concatenation of the outputs of each
                 `DynEdgeConv` layer. Defaults to [336, 256].
@@ -145,10 +137,10 @@ class DynEdge(GNN):
                 specified probability.
             repeat_input: Number of times to repeat the input features in 
                 preprocess layer input.
-            gps: if `True`, then the model uses the GPS conv
-                with DyneEdgeConv as local model, otherwise it uses the
-                DyneEdgeConv conv.
-            gps_heads: number of heads in the GPS conv.
+            conv: type of convolutional layer to use. Options are: 'dynedge',
+                'gps', 'dyngps'.
+            detector: Detector to use for re-building edge_attr.
+            conv_params: additional conv params.
         """
         self.dropout_builder, self.dropout, self.bn_builder = None, None, None
         if fix_points is not None:
@@ -172,36 +164,43 @@ class DynEdge(GNN):
         if features_subset is None:
             features_subset = slice(0, 3)
 
-        # DynEdge layer sizes
-        if dynedge_layer_sizes is None:
-            dynedge_layer_sizes = [
-                (
-                    128,
-                    256,
-                ),
-                (
-                    336,
-                    256,
-                ),
-                (
-                    336,
-                    256,
-                ),
-                (
-                    336,
-                    256,
-                ),
-            ]
+        self._conv = conv
+        self._conv_params = conv_params
+        if conv == 'dynedge':
+            dynedge_layer_sizes = self._conv_params['dynedge_layer_sizes']
+            if dynedge_layer_sizes is None:
+                dynedge_layer_sizes = [
+                    (
+                        128,
+                        256,
+                    ),
+                    (
+                        336,
+                        256,
+                    ),
+                    (
+                        336,
+                        256,
+                    ),
+                    (
+                        336,
+                        256,
+                    ),
+                ]
 
-        assert isinstance(dynedge_layer_sizes, list)
-        assert len(dynedge_layer_sizes)
-        assert all(isinstance(sizes, tuple) for sizes in dynedge_layer_sizes)
-        assert all(len(sizes) > 0 for sizes in dynedge_layer_sizes)
-        assert all(
-            all(size > 0 for size in sizes) for sizes in dynedge_layer_sizes
-        )
+            assert isinstance(dynedge_layer_sizes, list)
+            assert len(dynedge_layer_sizes)
+            assert all(isinstance(sizes, tuple) for sizes in dynedge_layer_sizes)
+            assert all(len(sizes) > 0 for sizes in dynedge_layer_sizes)
+            assert all(
+                all(size > 0 for size in sizes) for sizes in dynedge_layer_sizes
+            )
 
-        self._dynedge_layer_sizes = dynedge_layer_sizes
+            self._conv_layer_sizes = dynedge_layer_sizes
+        elif conv == 'gps' or conv == 'dyngps':
+            self._conv_layer_sizes = [
+                (self._conv_params['hidden_size'], self._conv_params['hidden_size'])
+            ] * self._conv_params['n_layers']
 
         # Post-processing layer sizes
         if post_processing_layer_sizes is None:
@@ -227,28 +226,6 @@ class DynEdge(GNN):
         assert all(size > 0 for size in readout_layer_sizes)
 
         self._readout_layer_sizes = readout_layer_sizes
-
-        self._gps = gps
-        self._gps_heads = gps_heads
-        # Check that all the hidden dimentions are the same
-        if gps:
-            self._gps_hidden_size = dynedge_layer_sizes[0][0]
-            assert all(
-                sizes[0] == self._gps_hidden_size and sizes[1] == self._gps_hidden_size
-                for sizes in dynedge_layer_sizes
-            ), \
-                f'If using GPS, all conv hidden dimensions must be the same. ' \
-                f'Got {dynedge_layer_sizes}'
-            assert all(
-                size == self._gps_hidden_size for size in post_processing_layer_sizes
-            ), \
-                f'If using GPS, all post-processing hidden dimensions must be the same. ' \
-                f'Got {post_processing_layer_sizes}'
-            assert all(
-                size == self._gps_hidden_size for size in readout_layer_sizes
-            ), \
-                f'If using GPS, all readout hidden dimensions must be the same. ' \
-                f'Got {readout_layer_sizes}'
 
         # Global pooling scheme(s)
         if isinstance(global_pooling_schemes, str):
@@ -296,21 +273,21 @@ class DynEdge(GNN):
 
         # Input processing for GPS
         self.node_emb, self.edge_emb, self.pe_lin = None, None, None
-        if self._gps:
-            self.node_emb = torch.nn.Linear(nb_input_features, self._gps_hidden_size)
-            self.pe_lin = torch.nn.Linear(20, self._gps_hidden_size)
-            self.edge_emb = torch.nn.Linear(self._nb_edge_attrs, self._gps_hidden_size)
+        if self._conv == 'gps' or self._conv == 'dyngps':
+            self.node_emb = torch.nn.Linear(nb_input_features, self._conv_params['hidden_size'])
+            self.pe_lin = torch.nn.Linear(self._conv_params['pe_output_size'], self._conv_params['hidden_size'])
+            self.edge_emb = torch.nn.Linear(self._nb_edge_attrs, self._conv_params['hidden_size'])
 
         # Convolutional operations
         self._conv_layers = torch.nn.ModuleList()
         nb_latent_features = nb_input_features
         nb_edge_attrs = self._nb_edge_attrs
-        for conv_ix, sizes in enumerate(self._dynedge_layer_sizes):
-            if not self._gps:
+        for conv_ix, sizes in enumerate(self._conv_layer_sizes):
+            if self._conv == 'dynedge':
                 layers = []
                 layer_sizes = []
                 if self._gps:
-                    layer_sizes.append(self._gps_hidden_size)
+                    layer_sizes.append(self._conv_params['hidden_size'])
                 else:
                     layer_sizes.append(nb_latent_features)
                 layer_sizes = layer_sizes + list(sizes)
@@ -338,28 +315,41 @@ class DynEdge(GNN):
                     features_subset=self._features_subset,
                 )
                 nb_latent_features = nb_out
-            else:
+            elif self._conv == 'gps':
                 conv_layer = GPSConv(
-                    channels=self._gps_hidden_size,
+                    channels=self._conv_params['hidden_size'],
                     conv=ResGatedGraphConvEdge(
-                        in_channels=self._gps_hidden_size, 
-                        out_channels=self._gps_hidden_size,
+                        in_channels=self._conv_params['hidden_size'], 
+                        out_channels=self._conv_params['hidden_size'],
                         bias=self._bias,
-                        edge_dim=self._gps_hidden_size,
+                        edge_dim=self._conv_params['hidden_size'],
                         act=self.activation_builder(),
                     ),
-                    heads=self._gps_heads,
+                    heads=self._conv_params['heads'],
+                )
+            elif self._conv == 'dyngps':
+                conv_layer = DynGPSConv(
+                    channels=self._conv_params['hidden_size'],
+                    conv=ResGatedGraphConvEdge(
+                        in_channels=self._conv_params['hidden_size'], 
+                        out_channels=self._conv_params['hidden_size'],
+                        bias=self._bias,
+                        edge_dim=self._conv_params['hidden_size'],
+                        act=self.activation_builder(),
+                    ),
+                    heads=self._conv_params['heads'],
+                    nb_neighbors=self._nb_neighbours,
                 )
             self._conv_layers.append(conv_layer)
-            nb_latent_features = self._gps_hidden_size
+            nb_latent_features = self._conv_params['hidden_size']
 
         # Post-processing operations
-        if self._gps:
-            post_processing_input_cat_size = self._gps_hidden_size
+        if self._conv == 'gps' or self._conv == 'dyngps':
+            post_processing_input_cat_size = self._conv_params['hidden_size']
         else:
             post_processing_input_cat_size = nb_input_features
         nb_latent_features = (
-            sum(sizes[-1] for sizes in self._dynedge_layer_sizes)
+            sum(sizes[-1] for sizes in self._conv_layer_sizes)
             + post_processing_input_cat_size * self.repeat_input
         )
 
@@ -478,21 +468,28 @@ class DynEdge(GNN):
 
             x = torch.cat((x, global_variables_distributed), dim=1)
         
-        if self._gps:
+        if self._conv == 'gps' or self._conv == 'dyngps':
             pe = data.pe
             x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
             edge_attr = self.edge_emb(edge_attr)
-
+            # .clone() so that any in-place operations do not affect the original
+            x_original = x.clone()
+        
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
         for i, conv_layer in enumerate(self._conv_layers):
-            if not self._gps:
+            if self._conv == 'dynedge':
                 edge_attr_to_pass = None
                 if i == 0:
                     edge_attr_to_pass = edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
-            else:
+            elif self._conv == 'gps':
                 x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
+            elif self._conv == 'dyngps':
+                # As edge_index is updated, we need to rebuild edge_attr
+                x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
+                edge_attr = self._conv_params['detector'].rebuild_edge_attr(x_original, edge_index)
+                edge_attr = self.edge_emb(edge_attr)
             skip_connections.append(x)
 
         # Skip-cat
