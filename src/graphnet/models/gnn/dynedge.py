@@ -6,11 +6,12 @@ import torch
 from torch import Tensor, LongTensor
 from torch_geometric.data import Data
 from torch_scatter import scatter_max, scatter_mean, scatter_min, scatter_sum
-from torch_geometric.nn.conv import GPSConv, GINEConv
+from torch_geometric.nn.conv import GINEConv
 
 from graphnet.models.components.layers import DynEdgeConv
 from graphnet.models.detector.detector import Detector
 from graphnet.models.gnn.dyn_gps_conv import DynGPSConv
+from graphnet.models.gnn.edge_gps_conv import GPSConvEdge
 from graphnet.utilities.config import save_model_config
 from graphnet.models.gnn.gnn import GNN
 from graphnet.models.gnn.res_gated_graph_conv_edge import ResGatedGraphConvEdge
@@ -337,7 +338,7 @@ class DynEdge(GNN):
                 )
                 nb_latent_features = nb_out
             elif self._conv == 'gps':
-                conv_layer = GPSConv(
+                conv_layer = GPSConvEdge(
                     channels=self._conv_params['hidden_size'],
                     conv=mpnn,
                     heads=self._conv_params['heads'],
@@ -494,7 +495,8 @@ class DynEdge(GNN):
                     edge_attr_to_pass = edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr_to_pass)
             elif self._conv == 'gps':
-                x = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
+                # edge_attr are updated here
+                x, edge_attr = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
             elif self._conv == 'dyngps':
                 # As edge_index is updated, we need to rebuild edge_attr
                 x, edge_index = conv_layer(x, edge_index, batch, edge_attr=edge_attr)
