@@ -460,6 +460,9 @@ class DynEdge(GNN):
         # Convenience variables
         x, edge_index, batch, n_pulses, edge_attr = \
             data.x, data.edge_index, data.batch, data.n_pulses, data.edge_attr
+        
+        if not self._conv_params['edge_attr']:
+            edge_attr = None
 
         global_variables = self._calculate_global_variables(
             x,
@@ -485,7 +488,8 @@ class DynEdge(GNN):
         if self._conv == 'gps' or self._conv == 'dyngps':
             pe = data.pe
             x = self.node_emb(x.squeeze(-1)) + self.pe_lin(pe)
-            edge_attr = self.edge_emb(edge_attr)
+            if edge_attr is not None:
+                edge_attr = self.edge_emb(edge_attr)
         
         # DynEdge-convolutions
         skip_connections = [x] * self.repeat_input
