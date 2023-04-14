@@ -302,7 +302,7 @@ class DynEdge(GNN):
                 ):
                     if ix == 0 and self._conv == 'dynedge':
                         nb_in *= 2
-                        if conv_ix == 0:
+                        if conv_ix == 0 and self._conv_params['edge_attr']:
                             nb_in += nb_edge_attrs
                     linear_block = LinearBlock(
                         nb_in,
